@@ -1,4 +1,6 @@
-# General Design
+# Protokoll für Richtigkeit, Ordnung, Transport, Optimierung, Kanalunabhängigkeit, Ortsunabhängigkeit, Liveübertragungen und balancierte Lastverteilung (Das PROTOKOLL)
+
+## General Design
 
 * "Registration" (server just lazily create directory if not exists): Client generates random blob (secret), sends to server. Server hashes it (solves encoding issue) → create directory of hex of hash.
 * Authentication: Client sends his secret (blob), server finds corresponding directory
@@ -19,7 +21,7 @@ Problem:
  - where `x` is the RLE integer that counts the number of existing chunks at the start of the file
  - assuming a worst case chunksize of 1 byte, this means that we need an MTU of at least 10 bytes to support all 64-bit file sizes (16 EiB).
 
-# Congestion Control
+## Congestion Control
 
 * Initially Client sends burst of packets for `RTT / m` milliseconds
 
