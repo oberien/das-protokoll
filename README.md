@@ -9,7 +9,7 @@
 * Client sends chunk after chunk
 * Server tracks which chunks have been received and asks client for missing chunks every n milliseconds.
 * Server creates file of size sent by client
-* Server creates tracking-file: runlength bitmap of chunks
+* Server creates tracking-file: bitmap of chunks
 * varint encoding of numbers
 
 Problem:
