@@ -17,6 +17,14 @@
 * End of transmission is indicated by largest chunk-id → no explicit end-message from client required
 * Checksums / data integrity handled by UDP Checksum
 * RTT: moving average
+* Packet Rate via inter-packet-time
+* Status Report Timing:
+    - gegeben:
+        + avg paketrate p
+        + logarithmische skalierungsfunktion für feedbackintervall l(x)
+        + zeit seit dem letzten statusreport z
+        + interpacket time i
+    - in dem moment wenn wir ein status paket schicken: deadline für das nächste status update := l(p*z) * i + 1/2 rtt
 
 ## 3-Way-Handshake
 
