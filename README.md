@@ -16,6 +16,6 @@ Problem:
 
 # Congestion Control
 
-* Initially Client sends burst of packets for $RTT / m$ milliseconds
+* Initially Client sends burst of packets for `RTT / m` milliseconds
 
 
