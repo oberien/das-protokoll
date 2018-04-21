@@ -49,6 +49,13 @@ Client → Server:
     - Path / Filename
         + Rust: Server must remove leading `/` before using `PathBuf::push`
 
+## status reporting
+
+* we keep a moving average of inter packet times
+* magic function `floor(x / ln(x + 1))`
+* we calculate packets/sec as input for this function
+* it outputs the status interval (number of packets until we send a status update)
+
 ## Example: Sending a File
 
 * 3-Way-Handshake
@@ -57,7 +64,8 @@ Client → Server:
 
 ## Congestion Control
 
-* Initially Client sends burst of packets for `RTT / m` milliseconds
+* ?? Initially Client sends burst of packets for `RTT / m` milliseconds ??
+* probably: slow start like tcp (but mb a bit faster?)
 
 ## Problems:
 
