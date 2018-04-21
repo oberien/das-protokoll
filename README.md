@@ -15,11 +15,11 @@
 Problem:
 
 * small MTU size such that runlength number is larger than MTU:
- - storage space for a varint integer in bytes `space(x) = ceil(log2(x) / 7)`
- - assuming the server status report contains no headers or anything else protocol is bounded by: `space(x) < MTU`
- - thus: `ceil(log2(x) / 7) < MTU` ; `x < 2 ^ (MTU * 7)`
- - where `x` is the RLE integer that counts the number of existing chunks at the start of the file
- - assuming a worst case chunksize of 1 byte, this means that we need an MTU of at least 10 bytes to support all 64-bit file sizes (16 EiB).
+  - storage space for a varint integer in bytes `space(x) = ceil(log2(x) / 7)`
+  - assuming the server status report contains no headers or anything else protocol is bounded by: `space(x) < MTU`
+  - thus: `ceil(log2(x) / 7) < MTU` ; `x < 2 ^ (MTU * 7)`
+  - where `x` is the RLE integer that counts the number of existing chunks at the start of the file
+  - assuming a worst case chunksize of 1 byte, this means that we need an MTU of at least 10 bytes to support all 64-bit file sizes (16 EiB).
 
 ## Congestion Control
 
