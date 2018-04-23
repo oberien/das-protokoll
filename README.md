@@ -1,4 +1,4 @@
-# Protokoll für Richtigkeit, Ordnung, Transport, Optimierung, Kanalunabhängigkeit, Ortsunabhängigkeit, Liveübertragungen und balancierte Lastverteilung (Das PROTOKOLL)
+# Protokoll für Richtigkeit, Ordnung, Transport, Optimierung, Kanalunabhängigkeit, Ortsunabhängigkeit, Latenzminimierung und balancierte Lastverteilung (Das PROTOKOLL)
 
 ## General Design
 
