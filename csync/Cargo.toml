@@ -1,0 +1,13 @@
+[package]
+name = "csync"
+version = "0.1.0"
+authors = ["oberien <jaro.fietz@gmx.de>"]
+
+[dependencies]
+tokio = "0.1"
+tokio-io = "0.1"
+net2 = "0.2"
+bytes = "0.4"
+futures = "0.1.21"
+log = "0.4"
+env_logger = "0.5"
