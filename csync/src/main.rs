@@ -10,6 +10,7 @@ extern crate tokio_io;
 mod server;
 mod client;
 mod codec;
+mod timeout;
 
 fn main() {
     env_logger::init();

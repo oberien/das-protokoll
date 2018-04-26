@@ -1,28 +1,27 @@
 use std::net::SocketAddr;
 use std::io;
-use std::time::{Instant, Duration};
+use std::time::Duration;
 
 use futures::sync::mpsc;
 use futures::{Future, Stream, Sink};
 use tokio::net::{UdpSocket, UdpFramed};
 use tokio::reactor::Handle;
+use tokio::timer::Interval;
 use tokio;
 use net2;
 
 use codec::Codec;
+use timeout::TimeoutStream;
 
 pub fn run() {
     let buf = vec![0; 8192];
     let listener = get_socket().expect("Can't bind main UdpSocket");
-    let mut listener = UdpFramed::new(listener, Codec);
+    let listener = UdpFramed::new(listener, Codec);
 
     let server = listener.for_each(|(vec, addr)| {
         println!("connection from {}: {:?}", addr, vec);
-        let (sender, receiver) = handle_client(vec, addr);
-        let sender = sender.map_err(|e| eprintln!("Error during Client Send: {:?}", e));
-        let receiver = receiver.map_err(|e| eprintln!("Error during Client Receive: {:?}", e));
-        tokio::spawn(sender);
-        tokio::spawn(receiver);
+        let client = handle_client(vec, addr);
+        tokio::spawn(client);
         Ok(())
     }).map_err(|e| eprintln!("Error during server: {:?}", e));
 
@@ -38,7 +37,7 @@ fn get_socket() -> io::Result<UdpSocket> {
 
 type BoxedFuture = Box<Future<Item = (), Error = ()> + Send>;
 
-fn handle_client(vec: Vec<u8>, addr: SocketAddr) -> (BoxedFuture, BoxedFuture) {
+fn handle_client(vec: Vec<u8>, addr: SocketAddr) -> BoxedFuture {
     let sock = get_socket().expect("Can't create client UdpSocket");
     sock.connect(&addr).expect("Can't connect to client");
     let framed = UdpFramed::new(sock, Codec);
@@ -46,14 +45,21 @@ fn handle_client(vec: Vec<u8>, addr: SocketAddr) -> (BoxedFuture, BoxedFuture) {
     let (sink, stream) = framed.split();
     let (tx, rx) = mpsc::unbounded();
 
-    let sender = rx.forward(sink.sink_map_err(|e| eprintln!("Error sending to sink: {:?}", e)))
+    let sender = TimeoutStream::new(rx, Duration::from_secs(10))
+        .map_err(|e| eprintln!("Error in channel-receiver: {:?}", e))
+        .forward(sink.sink_map_err(|e| eprintln!("Error sending to sink: {:?}", e)))
         .map(|_| ());
 
-    let receiver = stream.for_each(move |(vec, _)| {
-        println!("received: {:?}", vec);
-        tx.unbounded_send((vec, addr));
-        Ok(())
-    }).map_err(|e| eprintln!("Error during receive: {:?}", e));
-    (Box::new(sender), Box::new(receiver))
+    let receiver = TimeoutStream::new(stream, Duration::from_secs(10))
+        .for_each(move |(vec, _)| {
+            println!("received: {:?}", vec);
+            tx.unbounded_send((vec, addr)).unwrap();
+            Ok(())
+        }).map_err(|e| eprintln!("Error during receive: {:?}", e));
+
+    let client = sender.select(receiver)
+        .map(|(res, _)| println!("Client finished successfully: {:?}", res))
+        .map_err(|(err, _)| println!("Client finished with error: {:?}", err));
+    Box::new(client)
 
 }
