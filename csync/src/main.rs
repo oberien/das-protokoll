@@ -1,11 +1,14 @@
 #[macro_use]
 extern crate log;
 extern crate env_logger;
+#[macro_use]
 extern crate futures;
 extern crate bytes;
 extern crate net2;
 extern crate tokio;
 extern crate tokio_io;
+extern crate varmint;
+extern crate byteorder;
 extern crate bit_vec;
 extern crate tokio_file_unix;
 
