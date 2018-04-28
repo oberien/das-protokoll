@@ -28,39 +28,63 @@
 
 ## 3-Way-Handshake
 
-* Client → Server: Client Token
+* Client collects all information beforehand
+    - Reduces delay during Handshake
+    - → More precise RTT information
+* Client → Server: [Login Packet](#login-packet)
     - Server must answer before doing anything else to not influence RTT
 * Server → Client: Empty Packet
     - Calc RTT on Client
-* Client → Server: Empty Packet
+* Client → Server: [Command Packet](#command-packet)
     - Calc RTT on Server
 
-## Initiation Packet
+## Login Packet
+
+* Client Token
+    + any byte-array
+    + unique token, identifying the client
+    + Server calculates sha256 of token
+    + uses hex(hash) as directory
+
+## Command Packet
 
 * 1 byte Tag
 * Additional data based on Tag
 
 ## Tags
 
-Client → Server:
+* `0`: [Upload Request](#upload-request)
 
-* `0`: Upload File
-    - Varint length of file
-    - Path / Filename
-        + Rust: Server must remove leading `/` before using `PathBuf::push`
+## Upload Request
 
-## status reporting
+* tag: `0`
+* Varint length of file
+* Path / Filename
+    + Rust: Server must remove leading `/` before using `PathBuf::push`
+    + Length of path is length of packet - length of varint
+* Following packets are [Chunks](#chunk)
+
+## Chunk
+
+* Chunk ID
+    + Number of Chunk starting at 0
+    + Encoded as little endian in n bytes
+        - n = ceil(log2(number of chunks needed))
+
+## Example: Uploading a File
+
+* [3-Way-Handshake](#3-way-handshake)
+    + Client → Server: [Login Packet](#login-packet)
+    + Server → Client: Empty Packet
+    + Client → Server: [Upload Request](#upload-request)
+* [Chunks](#chunk)
+
+## Status Reporting
 
 * we keep a moving average of inter packet times
 * magic function `floor(x / ln(x + 1))`
 * we calculate packets/sec as input for this function
 * it outputs the status interval (number of packets until we send a status update)
-
-## Example: Sending a File
-
-* 3-Way-Handshake
-* Client → Server:
-
 
 ## Congestion Control
 
