@@ -11,13 +11,13 @@ use tokio::io::Error;
 use tokio::runtime::Runtime;
 use tokio::reactor::PollEvented2 as PollEvented;
 use tokio_file_unix::File;
-use tokio_io::io;
+use tokio::io;
 
 const MTU: usize = 1460;
 const CHUNK_SIZE: usize = 16;
 pub fn client() -> Result<(), Error>  {
-    let socket = UdpSocket::bind(&"127.0.0.1:31337".parse().unwrap())?;
-    let server = &"127.0.0.1:31338".parse().unwrap();
+    let socket = UdpSocket::bind(&"127.0.0.1:0".parse().unwrap())?;
+    let server = &"127.0.0.1:21088".parse().unwrap();
     socket.connect(server)?;
 
     let mut send_buf: Vec<u8> = Vec::with_capacity(MTU);

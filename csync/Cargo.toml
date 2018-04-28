@@ -5,7 +5,6 @@ authors = ["oberien <jaro.fietz@gmx.de>"]
 
 [dependencies]
 tokio = "0.1"
-tokio-io = "0.1"
 net2 = "0.2"
 bytes = "0.4"
 futures = "0.1.21"
@@ -14,4 +13,8 @@ env_logger = "0.5"
 varmint = "0.1"
 byteorder = "1.2"
 bit-vec = "0.5"
-tokio-file-unix = "0.5"
+#tokio-file-unix = "0.5"
+tokio-file-unix = { git = "https://github.com/oberien/tokio-file-unix" }
+ring = "0.12"
+hex = "0.3"
+take_mut = "0.2"

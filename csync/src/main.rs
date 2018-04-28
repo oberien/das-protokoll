@@ -6,11 +6,13 @@ extern crate futures;
 extern crate bytes;
 extern crate net2;
 extern crate tokio;
-extern crate tokio_io;
 extern crate varmint;
 extern crate byteorder;
 extern crate bit_vec;
 extern crate tokio_file_unix;
+extern crate ring;
+extern crate hex;
+extern crate take_mut;
 
 mod server;
 mod client;
@@ -21,5 +23,5 @@ fn main() {
     env_logger::init();
 
     client::client().unwrap();
-    //server::run();
+//    server::run();
 }
