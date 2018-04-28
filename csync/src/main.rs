@@ -6,6 +6,8 @@ extern crate bytes;
 extern crate net2;
 extern crate tokio;
 extern crate tokio_io;
+extern crate bit_vec;
+extern crate tokio_file_unix;
 
 mod server;
 mod client;
@@ -15,5 +17,6 @@ mod timeout;
 fn main() {
     env_logger::init();
 
-    server::run();
+    client::client().unwrap();
+    //server::run();
 }
