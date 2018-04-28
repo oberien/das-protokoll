@@ -18,3 +18,4 @@ tokio-file-unix = { git = "https://github.com/oberien/tokio-file-unix" }
 ring = "0.12"
 hex = "0.3"
 take_mut = "0.2"
+structopt = "0.2"
