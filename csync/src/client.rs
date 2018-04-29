@@ -30,7 +30,7 @@ pub fn client() -> Result<(), Error>  {
     let file = StdFile::open(filename).unwrap();
     let filesize = file.metadata().unwrap().len() as usize; // FIXME usize wtf
 
-    let chunk_size = index_field_size(MTU, filesize);
+    let chunk_size = MTU - index_field_size(MTU, filesize);
     let chunk_count = (filesize + chunk_size - 1) / chunk_size;
     let last_chunk_size = filesize - (chunk_count - 1) * chunk_size;
     let file = File::new_nb(file).unwrap().into_io(runtime.reactor()).unwrap();
