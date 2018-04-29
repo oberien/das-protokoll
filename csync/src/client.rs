@@ -26,7 +26,7 @@ pub fn client() -> Result<(), Error>  {
 
     let mut runtime = Runtime::new().unwrap();
 
-    let filename = "/etc/passwd";
+    let filename = "/usr/share/dict/cracklib-small";
     let file = StdFile::open(filename).unwrap();
     let filesize = file.metadata().unwrap().len() as usize; // FIXME usize wtf
 
@@ -68,7 +68,10 @@ pub fn client() -> Result<(), Error>  {
                 last_chunk_size,
             }, move |Client { socket, server, mut send_buf, recv_buf, rtt, file, chunk_bitmap, chunk_cursor, last_chunk_size }| {
                 if chunk_cursor == chunk_bitmap.len() {
+                    // TODO: only exit once server has confirmed everything
                     Box::new(ok(Loop::Break(()))) as Box<Future<Item=_, Error=_> + Send>
+                } else if chunk_bitmap[chunk_cursor] {
+                    Box::new(ok(Loop::Continue(Client { socket, server, send_buf, recv_buf, rtt, file, chunk_bitmap, chunk_cursor: chunk_cursor + 1, last_chunk_size }))) as Box<Future<Item=_, Error=_> + Send>
                 } else {
                     send_buf.clear();
 
