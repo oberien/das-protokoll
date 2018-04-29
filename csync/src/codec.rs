@@ -23,10 +23,11 @@ pub struct UploadRequest<'a> {
 }
 
 pub struct Chunk {
+    index_field_size: usize,
+    /// buffered for easy access
     pub index: u64,
-    pub data: [u8; MTU],
-    pub offset: usize,
-    pub size: usize,
+    /// serialized data with index in the front
+    pub data: Vec<u8>,
 }
 
 impl<'a> Login<'a> {
@@ -83,29 +84,46 @@ impl<'a> UploadRequest<'a> {
 }
 
 impl Chunk {
-    pub fn encode<W: Write>(&self, mut dst: W, index_field_size: usize) -> usize {
+    pub fn new(mut buf: Vec<u8>, index: u64, index_field_size: usize, data_size: usize) -> Chunk {
+        buf.clear();
         debug_assert!(0 < index_field_size && index_field_size <= 8);
-        debug_assert!(self.data.len() as u64 + index_field_size as u64 <= MTU as u64);
 
-        let mut arr = [0u8; 8];
-        (&mut arr[..]).write_u64::<LE>(self.index as u64).unwrap();
-        dst.write_all(&arr[..index_field_size]).unwrap();
-        dst.write_all(&self.data[self.offset..self.size]).unwrap();
+        (&mut buf).write_u64::<LE>(index).unwrap();
+        buf.resize(index_field_size + data_size, 0);
 
-        index_field_size + self.data.len()
+        Chunk {
+            index_field_size,
+            index,
+            data: buf,
+        }
     }
 
-    pub fn decode(src: [u8; MTU], size: usize, index_field_size: usize) -> Self {
+    pub fn decode(src: Vec<u8>, size: usize, index_field_size: usize) -> Self {
         let mut buf = [0u8; 8];
         (&mut buf[..index_field_size]).copy_from_slice(&src[..index_field_size]);
         let index = (&buf[..]).read_u64::<LE>().unwrap();
 
         Chunk {
+            index_field_size,
             index,
             data: src,
-            offset: index_field_size,
-            size,
         }
+    }
+
+    pub fn into_vec(self) -> Vec<u8> {
+        self.data
+    }
+}
+
+impl AsRef<[u8]> for Chunk {
+    fn as_ref(&self) -> &[u8] {
+        &self.buf[self.index_field_size..]
+    }
+}
+
+impl AsMut<[u8]> for Chunk {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.buf[self.index_field_size..]
     }
 }
 

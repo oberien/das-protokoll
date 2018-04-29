@@ -1,4 +1,4 @@
-use std::io::{self, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom, Error as IoError, ErrorKind};
 use std::mem;
 use std::time::{Instant, Duration};
 use std::fs::{self, File as StdFile};
@@ -6,13 +6,14 @@ use std::path::{PathBuf, Path};
 
 use futures::{Stream, Async, Poll};
 use futures::sync::mpsc::UnboundedSender;
-use tokio::io::AsyncWrite;
+use tokio::io::{self, AsyncWrite};
 use tokio::net::UdpSocket;
 use tokio::reactor::{PollEvented2, Handle};
 use tokio_file_unix::File;
 use ring::digest;
 use hex::ToHex;
 use take_mut;
+use bit_vec::BitVec;
 
 use codec::{self, MTU, Login, Command, UploadRequest, Chunk};
 
@@ -37,7 +38,7 @@ pub struct WaitForAckAndCommand {
 }
 
 pub struct WaitForChunk {
-    file: PollEvented2<File<StdFile>>,
+    file: Option<PollEvented2<File<StdFile>>>,
     index_field_size: usize,
     len_left: usize,
 }
@@ -90,7 +91,7 @@ impl Receiver {
         path.push("file");
         let file = StdFile::create(path).unwrap();
         self.state = State::WaitForChunk(WaitForChunk {
-            file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
+            file: Some(File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap()),
             index_field_size: codec::index_field_size(MTU, req.length),
             len_left: req.length,
         });
@@ -99,6 +100,9 @@ impl Receiver {
     pub fn chunk(&mut self, chunk: Chunk) {
         take_mut::take_or_recover(&mut self.state, || State::Invalid, |old| {
             let old = if let State::WaitForChunk(old) = old { old } else { unreachable!() };
+            let file = old.file.take().unwrap();
+            io::write_all(file, chunk)
+                .and_then(|(file, chunk)|)
             State::WritingChunk(WritingChunk {
                 old,
                 chunk,
@@ -114,7 +118,7 @@ impl Receiver {
 
 impl Stream for Receiver {
     type Item = ();
-    type Error = io::Error;
+    type Error = IoError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if let State::WritingChunk(_) = self.state {
@@ -160,7 +164,7 @@ impl Stream for Receiver {
             State::Invalid => unreachable!(),
             State::WaitForAckAndCommand(state) => {
                 let command = Command::decode(&mut buf[..size])
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                    .map_err(|e| IoError::new(ErrorKind::InvalidData, e))?;
                 self.ack(state.sent, command)
             },
             State::WaitForChunk(WaitForChunk { index_field_size, .. }) =>
