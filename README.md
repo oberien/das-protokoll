@@ -20,6 +20,7 @@
 * Size of chunk-id is automatically calculated from that: ⌈log₂(len)⌉
 * End of transmission is indicated by largest chunk-id → no explicit end-message from client required
 * Checksums / data integrity handled by UDP Checksum
+* Fixed, configurable MTU
 
 ## 3-Way-Handshake
 

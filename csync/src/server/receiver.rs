@@ -104,9 +104,38 @@ impl Receiver {
                 chunk,
             })
         });
+        // TODO: Continue old upload
+        // TODO: Handle existing completed files
         // TODO: length check of chunks to ensure max usage of MTU
         // TODO: BitVec
         // TODO: Write BitVec to Disk
+    }
+
+    pub fn write_chunk(&mut self) -> Option<Poll<Option<(), io::Error>>> {
+        let state = mem::replace(&mut self.state, State::Invalid);
+        let mut state = if let State::WritingChunk(state) = state { state } else { unreachable!() };
+
+        let written = {
+            let buf = &state.chunk.data[state.chunk.offset..state.chunk.size];
+            let start = state.chunk.index * MTU as u64;
+            state.old.file.get_mut().seek(SeekFrom::Start(start))?;
+            try_ready!(state.old.file.poll_write(buf))
+        };
+        state.chunk.offset += written;
+        state.old.len_left -= written;
+        // still stuff to write
+        if state.chunk.offset != state.chunk.size {
+            self.state = State::WritingChunk(state);
+            return Some(Ok(Async::NotReady));
+        } else {
+            // last chunk
+            if state.chunk.size != MTU {
+                // close connection
+                return Some(Ok(Async::Ready(None)));
+            } else {
+                self.state = State::WaitForChunk(state.old)
+            }
+        }
     }
 }
 
@@ -116,29 +145,8 @@ impl Stream for Receiver {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if let State::WritingChunk(_) = self.state {
-            let state = mem::replace(&mut self.state, State::Invalid);
-            let mut state = if let State::WritingChunk(state) = state { state } else { unreachable!() };
-
-            let written = {
-                let buf = &state.chunk.data[state.chunk.offset..state.chunk.size];
-                let start = state.chunk.index * MTU as u64;
-                state.old.file.get_mut().seek(SeekFrom::Start(start))?;
-                try_ready!(state.old.file.poll_write(buf))
-            };
-            state.chunk.offset += written;
-            state.old.len_left -= written;
-            // still stuff to write
-            if state.chunk.offset != state.chunk.size {
-                self.state = State::WritingChunk(state);
-                return Ok(Async::NotReady);
-            } else {
-                // last chunk
-                if state.chunk.size != MTU {
-                    // close connection
-                    return Ok(Async::Ready(None));
-                } else {
-                    self.state = State::WaitForChunk(state.old)
-                }
+            if let Some(ret) = self.write_chunk() {
+                return ret;
             }
         }
         if let State::Invalid = self.state {
