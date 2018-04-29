@@ -37,9 +37,12 @@ struct Opt {
     /// Remote host
     #[structopt(short = "h", long = "host", default_value = "localhost")]
     host: String,
+
+/*
     /// Directory to upload files from
     #[structopt(short = "f", long = "files")]
     files: Option<PathBuf>,
+*/
 }
 
 fn main() {

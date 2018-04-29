@@ -45,7 +45,7 @@ impl<'a> Login<'a> {
 impl<'a> Command<'a> {
     pub fn encode<W: Write + WriteVarInt + WriteBytesExt>(&self, mut dst: W) -> usize {
         match self {
-            Command::UploadRequest(req) => {
+            &Command::UploadRequest(ref req) => {
                 dst.write_u8(0).unwrap();
                 req.encode(dst)
             }
