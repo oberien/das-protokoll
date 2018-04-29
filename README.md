@@ -2,33 +2,29 @@
 
 ## General Design
 
-* "Registration" (server just lazily create directory if not exists): Client generates random blob (secret), sends to server. Server hashes it (solves encoding issue) → create directory of hex of hash.
-* Authentication: Client sends his secret (blob), server finds corresponding directory
-* 3-way-handshake (Keine Daten im ACK-Paket, da dies durch Festplattenlatenz die RTT zum Server verfälscht) → Both Server and Client have RTT information
-* Chunks fortlaufend indizieren → Out-of-Order solved
-* Client sends chunk after chunk
-* Server tracks which chunks have been received and asks client for missing chunks every now and again.
+* 3-way-handshake to get RTT information
+* Support for different commands
+    + Command packet with type-id
+* Only one command per session
+    + Otw an old chunk could reach server after new upload is initiated
+    + New connection must be from different port
+* Chunks indexed sequentially
+    + → Out-of-Order solved
 * Server creates file of size sent by client
 * Server creates tracking-file: bitmap of chunks
-* Server sends missing chunks as runlength encoding of the bitmap file (optimized to not include value because it's binary)
+* Client sends chunk after chunk
+* Server sends missing chunks as runlength encoding of the bitmap file
+    + optimized to not include value because it's binary
 * varint encoding of numbers
 * Length of file in bytes is sent before client starts upload
 * Size of chunk-id is automatically calculated from that: ⌈log₂(len)⌉
 * End of transmission is indicated by largest chunk-id → no explicit end-message from client required
 * Checksums / data integrity handled by UDP Checksum
-* RTT: moving average
-* Packet Rate via inter-packet-time
-* Status Report Timing:
-    - gegeben:
-        + avg paketrate p
-        + logarithmische skalierungsfunktion für feedbackintervall l(x)
-        + zeit seit dem letzten statusreport z
-        + interpacket time i
-    - in dem moment wenn wir ein status paket schicken: deadline für das nächste status update := l(p*z) * i + 1/2 rtt
 
 ## 3-Way-Handshake
 
 * Client collects all information beforehand
+    - Filename, Size of File
     - Reduces delay during Handshake
     - → More precise RTT information
 * Client → Server: [Login Packet](#login-packet)
@@ -45,6 +41,7 @@
     + unique token, identifying the client
     + Server calculates sha256 of token
     + uses hex(hash) as directory
+        - creates it if it doesn't exist
 
 ## Command Packet
 
@@ -81,7 +78,8 @@
 
 ## Status Reporting
 
-* we keep a moving average of inter packet times
+* RTT: moving average
+* Inter packet times: moving average
 * magic function `floor(x / ln(x + 1))`
 * we calculate packets/sec as input for this function
 * it outputs the status interval (number of packets until we send a status update)
@@ -90,6 +88,11 @@
 
 * ?? Initially Client sends burst of packets for `RTT / m` milliseconds ??
 * probably: slow start like tcp (but mb a bit faster?)
+
+## Connection End
+
+* All chunks have been received
+* 10s without a packet from client
 
 ## Problems:
 
@@ -100,6 +103,6 @@
     - where `x` is the RLE integer that counts the number of existing chunks at the start of the file
     - assuming a worst case chunksize of 1 byte, this means that we need an MTU of at least 10 bytes to support all 64-bit file sizes (16 EiB).
 * MTU Probing
-* MTU must have a size of least `max(10, maxlength of file path)`
+* MTU must have a size of least `max(10, maxlength of file path + length of chunk-index-field)`
 * Foreslashes inside filenames must be escaped to differentiate them from folders
 
