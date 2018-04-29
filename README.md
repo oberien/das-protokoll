@@ -10,16 +10,28 @@
     + New connection must be from different port
 * Chunks indexed sequentially
     + → Out-of-Order solved
+* Length of file in bytes is sent before client starts upload
+* Size of chunk-id is automatically calculated from that: ⌈log₂(number of chunks)/8⌉
 * Server creates file of size sent by client
-* Server creates tracking-file: bitmap of chunks
-* Client sends chunk after chunk
+* We create a bitmap of successfully transferred chunks - obv this starts out with all zeroes
+    + server stores it in a tracking-file along with the actual file to support resumption
+    + server regularly sends this bitmap to the client
+    + client is free to maintain it any way (e.g. in memory)
+* Client has a "cursor" pointing into the chunk bitmap
+    + start at the beginning, keep going forward as we send out chunks
+    + obviously, only send chunks that are marked as "not received"
+    + whenever client receivs a status update indicating lost packets, we reset the cursor to the beginning
+    + we assume packet loss iff a chunk we marked as sent _more than 3*RTT ago_ is not marked as received in a status report from the server
 * Server sends missing chunks as runlength encoding of the bitmap file
     + optimized to not include value because it's binary
-* varint encoding of numbers
-* Length of file in bytes is sent before client starts upload
-* Size of chunk-id is automatically calculated from that: ⌈log₂(len)⌉
+    + **truncated to MTU**
+        - obviously, the varint run-length encoding can take up to n bytes to represent n bits in the case of a strictly alternating bitmap (010101010101...)
+        - this may be larger than the MTU and thus not fit into a single packet
+        - we simply truncate at MTU since we expect average cases to indicate enough packets in their report that the next one will have arrived before we run out of information
+        - if it doesn't this is *still* not a problem as it will simply cause gratuitous retransmits, leading only to reduced performance
 * End of transmission is indicated by largest chunk-id → no explicit end-message from client required
-* Checksums / data integrity handled by UDP Checksum
+    + protocol is terminated by a status report from the server indicating that every chunk was received (bitmask of ones), which will **always** fit into a reasonably sized MTU due to RLE
+* Checksums / data integrity handled by UDP
 * Fixed, configurable MTU
 
 ## 3-Way-Handshake
@@ -38,7 +50,7 @@
 ## Login Packet
 
 * Client Token
-    + any byte-array
+    + any byte-array (max size: MTU)
     + unique token, identifying the client
     + Server calculates sha256 of token
     + uses hex(hash) as directory
@@ -59,7 +71,7 @@
 * Varint length of file
 * Path / Filename
     + Rust: Server must remove leading `/` before using `PathBuf::push`
-    + Length of path is length of packet - length of varint
+    + No length given - this is simply the tail of the packet
 * Following packets are [Chunks](#chunk)
 
 ## Chunk
@@ -67,7 +79,7 @@
 * Chunk ID
     + Number of Chunk starting at 0
     + Encoded as little endian in n bytes
-        - n = ceil(log2(number of chunks needed))
+        - n = ceil(log2(number of chunks needed) / 8)
 
 ## Example: Uploading a File
 
@@ -102,7 +114,7 @@
     - assuming the server status report contains no headers or anything else protocol is bounded by: `space(x) < MTU`
     - thus: `ceil(log2(x) / 7) < MTU` ; `x < 2 ^ (MTU * 7)`
     - where `x` is the RLE integer that counts the number of existing chunks at the start of the file
-    - assuming a worst case chunksize of 1 byte, this means that we need an MTU of at least 10 bytes to support all 64-bit file sizes (16 EiB).
+    - assuming a worst case chunksize of 1 byte, this means that we need an MTU of at least 10 bytes (plus overhead from headers etc) to support all 64-bit file sizes (16 EiB).
 * MTU Probing
 * MTU must have a size of least `max(10, maxlength of file path + length of chunk-index-field)`
 * Foreslashes inside filenames must be escaped to differentiate them from folders
