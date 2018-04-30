@@ -27,7 +27,7 @@ pub struct Chunk {
     /// buffered for easy access
     pub index: u64,
     /// serialized data with index in the front
-    pub data: Vec<u8>,
+    pub buf: Vec<u8>,
 }
 
 impl<'a> Login<'a> {
@@ -94,7 +94,7 @@ impl Chunk {
         Chunk {
             index_field_size,
             index,
-            data: buf,
+            buf,
         }
     }
 
@@ -106,12 +106,12 @@ impl Chunk {
         Chunk {
             index_field_size,
             index,
-            data: src,
+            buf: src,
         }
     }
 
     pub fn into_vec(self) -> Vec<u8> {
-        self.data
+        self.buf
     }
 }
 

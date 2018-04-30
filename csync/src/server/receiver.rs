@@ -4,7 +4,7 @@ use std::time::{Instant, Duration};
 use std::fs::{self, File as StdFile};
 use std::path::{PathBuf, Path};
 
-use futures::{Stream, Async, Poll};
+use futures::{Stream, Async, Poll, Future};
 use futures::sync::mpsc::UnboundedSender;
 use tokio::io::{self, AsyncWrite};
 use tokio::net::UdpSocket;
@@ -32,20 +32,23 @@ pub enum State {
     WritingChunk(WritingChunk),
 }
 
-#[derive(Clone, Copy)]
 pub struct WaitForAckAndCommand {
     sent: Instant,
 }
 
 pub struct WaitForChunk {
-    file: Option<PollEvented2<File<StdFile>>>,
+    file: PollEvented2<File<StdFile>>,
+    buf: Vec<u8>,
     index_field_size: usize,
     len_left: usize,
 }
 
+type WriteChunk = io::WriteAll<PollEvented2<File<StdFile>>, Chunk>;
+
 pub struct WritingChunk {
-    old: WaitForChunk,
-    chunk: Chunk,
+    index_field_size: usize,
+    len_left: usize,
+    future: WriteChunk,
 }
 
 impl Receiver {
@@ -91,22 +94,21 @@ impl Receiver {
         path.push("file");
         let file = StdFile::create(path).unwrap();
         self.state = State::WaitForChunk(WaitForChunk {
-            file: Some(File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap()),
+            file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
+            buf: Vec::with_capacity(MTU),
             index_field_size: codec::index_field_size(MTU, req.length),
             len_left: req.length,
         });
     }
 
-    pub fn chunk(&mut self, chunk: Chunk) {
-        take_mut::take_or_recover(&mut self.state, || State::Invalid, |old| {
-            let old = if let State::WaitForChunk(old) = old { old } else { unreachable!() };
-            let file = old.file.take().unwrap();
-            io::write_all(file, chunk)
-                .and_then(|(file, chunk)|)
-            State::WritingChunk(WritingChunk {
-                old,
-                chunk,
-            })
+    pub fn chunk(&mut self, chunk: Chunk, index_field_size: usize, len_left: usize,
+                 file: PollEvented2<File<StdFile>>) {
+        trace!("Switch to WritingChunk with len {}", chunk.as_ref().len());
+        let future = io::write_all(file, chunk);
+        self.state = State::WritingChunk(WritingChunk {
+            index_field_size,
+            len_left,
+            future,
         });
         // TODO: Continue old upload
         // TODO: Handle existing completed files
@@ -122,54 +124,58 @@ impl Stream for Receiver {
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         if let State::WritingChunk(_) = self.state {
+            trace!("Try writing Chunk");
+            let (file, chunk) = {
+                let state = if let State::WritingChunk(ref mut state) = self.state { state } else { unreachable!() };
+                try_ready!(state.future.poll())
+            };
+            trace!("Chunk written");
+
             let state = mem::replace(&mut self.state, State::Invalid);
             let mut state = if let State::WritingChunk(state) = state { state } else { unreachable!() };
+            state.len_left -= chunk.as_ref().len();
 
-            let written = {
-                let buf = &state.chunk.data[state.chunk.offset..state.chunk.size];
-                let start = state.chunk.index * MTU as u64;
-                state.old.file.get_mut().seek(SeekFrom::Start(start))?;
-                try_ready!(state.old.file.poll_write(buf))
-            };
-            state.chunk.offset += written;
-            state.old.len_left -= written;
-            // still stuff to write
-            if state.chunk.offset != state.chunk.size {
-                self.state = State::WritingChunk(state);
-                return Ok(Async::NotReady);
-            } else {
-                // last chunk
-                if state.chunk.size != MTU {
-                    // close connection
-                    return Ok(Async::Ready(None));
-                } else {
-                    self.state = State::WaitForChunk(state.old)
-                }
+            // if last chunk
+            // TODO: Until bitmap is full
+            if state.len_left == 0 {
+                info!("Last chunk received. Closing Connection");
+                // close connection
+                return Ok(Async::Ready(None));
             }
+            trace!("Switch to WaitForChunk");
+            self.state = State::WaitForChunk(WaitForChunk {
+                file,
+                buf: chunk.into_vec(),
+                index_field_size: state.index_field_size,
+                len_left: state.len_left,
+            });
         }
-        if let State::Invalid = self.state {
-            unreachable!();
-        }
-
-        let mut buf = [0u8; MTU];
-        let size = match self.socket.poll_recv(&mut buf) {
-            Ok(Async::NotReady) => return Ok(Async::NotReady),
-            Ok(Async::Ready(size)) => size,
-            Err(e) => return Err(e),
-        };
-
-        debug!("Got Message {:?}", &buf[..size]);
 
         match self.state {
             State::Invalid => unreachable!(),
-            State::WaitForAckAndCommand(state) => {
+            State::WaitForAckAndCommand(WaitForAckAndCommand { sent }) => {
+                let mut buf = [0u8; MTU];
+                let size = try_ready!(self.socket.poll_recv(&mut buf));
                 let command = Command::decode(&mut buf[..size])
                     .map_err(|e| IoError::new(ErrorKind::InvalidData, e))?;
-                self.ack(state.sent, command)
+                self.ack(sent, command)
             },
-            State::WaitForChunk(WaitForChunk { index_field_size, .. }) =>
-                self.chunk(Chunk::decode(buf, size, index_field_size)),
+            State::WaitForChunk(_) => {
+                let size = if let State::WaitForChunk(WaitForChunk { ref mut buf, .. }) = self.state {
+                    buf.resize(MTU, 0);
+                    let size = try_ready!(self.socket.poll_recv(buf));
+                    buf.truncate(size);
+                    size
+                } else { unreachable!() };
+                let state = mem::replace(&mut self.state, State::Invalid);
+                let state = if let State::WaitForChunk(state) = state { state } else { unreachable!() };
+                let chunk = Chunk::decode(state.buf, size, state.index_field_size);
+                self.chunk(chunk, state.index_field_size, state.len_left, state.file);
+            }
             State::WritingChunk(_) => unreachable!(),
+        }
+        if let State::Invalid = self.state {
+            panic!("Invalid Receiver-State");
         }
         Ok(Async::Ready(Some(())))
     }
