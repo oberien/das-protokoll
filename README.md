@@ -119,3 +119,9 @@
 * MTU must have a size of least `max(10, maxlength of file path + length of chunk-index-field)`
 * Foreslashes inside filenames must be escaped to differentiate them from folders
 
+
+## Open Questions
+
+* Error messages to Client
+* Which files does the server have?
+
