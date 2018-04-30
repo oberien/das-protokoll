@@ -1,0 +1,6 @@
+[package]
+name = "bitte-ein-bit"
+version = "0.1.0"
+authors = ["oberien <jaro.fietz@gmx.de>"]
+
+[dependencies]
