@@ -148,29 +148,43 @@ where
     let mut count = 0;
     let mut prev_val = true;
     let mut written = 0;
-    for bit in bitmap {
+    for (i, bit) in bitmap.iter().enumerate() {
         if bit == prev_val {
             count += 1;
             continue;
         }
         match w.write_u64_varint(count) {
-            Ok(()) => {},
+            Ok(()) => written += varmint::len_u64_varint(count),
             Err(ref e) if e.kind() == io::ErrorKind::WriteZero => return Ok(written),
             e => e?
         }
-        written += varmint::len_u64_varint(count);
         prev_val = bit;
         count = 1;
+    }
+    match w.write_u64_varint(count) {
+        Ok(()) => written += varmint::len_u64_varint(count),
+        Err(ref e) if e.kind() == io::ErrorKind::WriteZero => return Ok(written),
+        e => e?
     }
     Ok(written)
 }
 
 #[cfg(test)]
-#[test]
-fn test_runlength() {
-    let mut bitmap = BitMap::new([0b1101000u8]);
-    let mut enc = [0u8; 4];
-    let written = write_runlength_encoded(bitmap, &mut enc).unwrap();
-    assert!(written, 4);
-    assert!(enc, [2, 1, 1, 3]);
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_runlength() {
+        let mut bitmap = BitMap::new([0b0000_1011u8]);
+        let mut enc = [0u8; 5];
+        let written = write_runlength_encoded(&bitmap, Cursor::new(&mut enc[..])).unwrap();
+        assert_eq!(written, 4);
+        assert_eq!(enc, [2, 1, 1, 4, 0]);
+
+        let mut bitmap = BitMap::new([0b1000_1011u8]);
+        let mut enc = [0u8; 5];
+        let written = write_runlength_encoded(&bitmap, Cursor::new(&mut enc[..])).unwrap();
+        assert_eq!(written, 5);
+        assert_eq!(enc, [2, 1, 1, 3, 1]);
+    }
 }

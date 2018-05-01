@@ -40,7 +40,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     pub fn get(&self, bit: usize) -> bool {
         self.check(bit);
         let byte = self.buf.as_ref()[bit / 8];
-        let bitmask = (bit % 8) as u8;
+        let bitmask = 1 << (bit % 8);
         (byte & bitmask) == bitmask
     }
 
@@ -52,7 +52,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     pub fn set(&mut self, bit: usize, value: bool) {
         self.check(bit);
         let byte = &mut self.buf.as_mut()[bit / 8];
-        *byte &= (value as u8) << (bit % 8);
+        let bitmask = 1 << (bit % 8);
+        *byte &= !bitmask;
+        *byte |= (value as u8) << (bit % 8);
     }
 
     /// Flips the bit at given position, returning its new value.
@@ -66,6 +68,21 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
         let bitmask = 1 << (bit % 8);
         *byte ^= bitmask;
         *byte == bitmask
+    }
+
+    /// Returns the number of bits
+    pub fn num_bits(&self) -> usize {
+        self.num_bits
+    }
+
+    /// Returns a reference to the inner type
+    pub fn get_ref(&self) -> &T {
+        &self.buf
+    }
+
+    /// Returns a mutable reference to the inner type
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.buf
     }
 
     /// Consumes self, returning the inner type
