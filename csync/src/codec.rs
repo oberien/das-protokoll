@@ -1,8 +1,9 @@
-use std::io::{Cursor, Write};
+use std::io::{self, Cursor, Write};
 
 use std::str::{self, Utf8Error};
 use varmint::{self, ReadVarInt, WriteVarInt};
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
+use bitte_ein_bit::BitMap;
 
 pub const MTU: usize = 1460;
 
@@ -137,4 +138,39 @@ pub fn index_field_size(mtu: usize, length: usize) -> usize {
         }
         index_field_size += 1;
     }
+}
+
+pub fn write_runlength_encoded<T, W>(bitmap: &BitMap<T>, mut w: W) -> io::Result<usize>
+where
+    T: AsRef<[u8]> + AsMut<[u8]>,
+    W: Write,
+{
+    let mut count = 0;
+    let mut prev_val = true;
+    let mut written = 0;
+    for bit in bitmap {
+        if bit == prev_val {
+            count += 1;
+            continue;
+        }
+        match w.write_u64_varint(count) {
+            Ok(()) => {},
+            Err(ref e) if e.kind() == io::ErrorKind::WriteZero => return Ok(written),
+            e => e?
+        }
+        written += varmint::len_u64_varint(count);
+        prev_val = bit;
+        count = 1;
+    }
+    Ok(written)
+}
+
+#[cfg(test)]
+#[test]
+fn test_runlength() {
+    let mut bitmap = BitMap::new([0b1101000u8]);
+    let mut enc = [0u8; 4];
+    let written = write_runlength_encoded(bitmap, &mut enc).unwrap();
+    assert!(written, 4);
+    assert!(enc, [2, 1, 1, 3]);
 }

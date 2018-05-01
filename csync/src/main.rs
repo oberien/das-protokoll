@@ -15,6 +15,7 @@ extern crate hex;
 extern crate take_mut;
 #[macro_use]
 extern crate structopt;
+extern crate bitte_ein_bit;
 
 mod server;
 mod client;

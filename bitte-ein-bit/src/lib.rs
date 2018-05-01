@@ -13,23 +13,23 @@ pub struct BitMap<T: AsRef<[u8]> + AsMut<[u8]>> {
 impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     /// Create a new BitMap from an underlying buffer.
     pub fn new(buf: T) -> BitMap<T> {
-        BitMap {
-            num_bits: buf.as_ref().len() * 8,
-            buf,
-        }
+        let num_bits = buf.as_ref().len() * 8;
+        BitMap::with_length(buf, num_bits)
     }
 
     /// Create a new BitMap with given number of bits.
     ///
-    /// Errors if the passed number of bits do not fit into the buffer.
-    pub fn with_length(buf: T, num_bits: usize) -> Result<BitMap<T>, T> {
+    /// # Panics
+    ///
+    /// Panics if the passed number of bits do not fit into the buffer.
+    pub fn with_length(buf: T, num_bits: usize) -> BitMap<T> {
         if buf.as_ref().len() * 8 < num_bits {
-            return Err(buf);
+            panic!("Buf too small for {} bits", num_bits);
         }
-        Ok(BitMap {
+        BitMap {
             buf,
             num_bits,
-        })
+        }
     }
 
     /// Get the bit at given position.

@@ -18,3 +18,4 @@ ring = "0.12"
 hex = "0.3"
 take_mut = "0.2"
 structopt = "0.2"
+bitte-ein-bit = { path = "../bitte-ein-bit" }
