@@ -1,5 +1,6 @@
 #![no_std]
 use core::ops::Index;
+use core::fmt;
 
 mod range;
 
@@ -178,6 +179,15 @@ impl<'a, T: AsRef<[u8]> + AsMut<[u8]> + 'a> DoubleEndedIterator for Iter<'a, T> 
         }
         self.back -= 1;
         Some(self.bitmap.get(self.back))
+    }
+}
+
+impl<T: AsRef<[u8]> + AsMut<[u8]>> fmt::Debug for BitMap<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("BitMap")
+            .field("buf", &self.buf.as_ref())
+            .field("num_bits", &self.num_bits)
+            .finish()
     }
 }
 
