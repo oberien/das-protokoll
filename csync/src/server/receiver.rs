@@ -17,7 +17,7 @@ use take_mut;
 use bitte_ein_bit::BitMap;
 use memmap::{MmapMut, MmapOptions};
 
-use codec::{self, MTU, Login, Command, UploadRequest, Chunk};
+use codec::{self, MTU, Login, Command, UploadRequest, Chunk, ChunkInfo};
 
 pub struct Receiver {
     state: State,
@@ -42,14 +42,14 @@ pub struct WaitForChunk {
     file: PollEvented2<File<StdFile>>,
     bitmap: BitMap<MmapMut>,
     buf: Vec<u8>,
-    index_field_size: u64,
+    chunk_info: ChunkInfo,
 }
 
 type WriteChunk = io::WriteAll<PollEvented2<File<StdFile>>, Chunk>;
 
 pub struct WritingChunk {
     bitmap: BitMap<MmapMut>,
-    index_field_size: u64,
+    chunk_info: ChunkInfo,
     future: WriteChunk,
 }
 
@@ -87,6 +87,8 @@ impl Receiver {
 
     pub fn upload_request(&mut self, req: UploadRequest) {
         debug!("upload request: {:?}", req);
+
+        let chunk_info = codec::index_field_size(req.length);
         let mut req_path = Path::new(req.path);
         if req_path.has_root() {
             req_path = req_path.strip_prefix("/").unwrap();
@@ -94,22 +96,19 @@ impl Receiver {
         let mut path = self.folder.join(req_path);
         fs::create_dir_all(&path).unwrap();
         let file_path = path.join("file");
-        path.push("bitmap");
-        let file = StdFile::create(file_path).unwrap();
-        file.set_len(req.length as u64).unwrap();
+        let bitmap_path = path.join("bitmap");
+
+        let continue_upload = bitmap_path.exists();
+
         let bitmap_file = OpenOptions::new()
             .read(true)
-            .write(true)
             .append(true)
             .create(true)
-            .open(path)
+            .open(bitmap_path)
             .unwrap();
 
-        let chunk_info = codec::index_field_size(req.length);
-
         let bitmap_file_len = (chunk_info.num_chunks + 7) / 8;
-        if bitmap_file.metadata().unwrap().size() < bitmap_file_len {
-            bitmap_file.set_len(0).unwrap();
+        if !continue_upload {
             bitmap_file.set_len(bitmap_file_len).unwrap();
         }
 
@@ -120,25 +119,34 @@ impl Receiver {
         };
         let bitmap = BitMap::with_length(mmap, chunk_info.num_chunks);
 
+
+        let mut file = OpenOptions::new();
+        if continue_upload {
+            file.append(true);
+        }
+        let file = file.create(true)
+            .write(true)
+            .open(file_path).unwrap();
+        file.set_len(req.length as u64).unwrap();
+
         self.state = State::WaitForChunk(WaitForChunk {
             file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
             bitmap,
             buf: Vec::with_capacity(MTU),
-            index_field_size: chunk_info.index_field_size,
+            chunk_info,
         });
     }
 
-    pub fn chunk(&mut self, chunk: Chunk, index_field_size: u64,
-                 file: PollEvented2<File<StdFile>>, bitmap: BitMap<MmapMut>) {
+    pub fn chunk(&mut self, chunk: Chunk, chunk_info: ChunkInfo,
+                 mut file: PollEvented2<File<StdFile>>, bitmap: BitMap<MmapMut>) {
         trace!("Switch to WritingChunk with len {}", chunk.as_ref().len());
-        file.get_mut().seek(SeekFrom::Start())
+        file.get_mut().seek(SeekFrom::Start(chunk.index * chunk_info.chunk_size)).unwrap();
         let future = io::write_all(file, chunk);
         self.state = State::WritingChunk(WritingChunk {
             bitmap,
-            index_field_size,
+            chunk_info,
             future,
         });
-        // TODO: Reordering / seeking
         // TODO: Continue old upload
         // TODO: Handle existing completed files
         // TODO: length check of chunks to ensure max usage of MTU
@@ -173,7 +181,7 @@ impl Stream for Receiver {
                 file,
                 buf: chunk.into_vec(),
                 bitmap: state.bitmap,
-                index_field_size: state.index_field_size,
+                chunk_info: state.chunk_info,
             });
         }
 
@@ -195,8 +203,8 @@ impl Stream for Receiver {
                 } else { unreachable!() };
                 let state = mem::replace(&mut self.state, State::Invalid);
                 let state = if let State::WaitForChunk(state) = state { state } else { unreachable!() };
-                let chunk = Chunk::decode(state.buf, size, state.index_field_size);
-                self.chunk(chunk, state.index_field_size, state.file, state.bitmap);
+                let chunk = Chunk::decode(state.buf, size, state.chunk_info.index_field_size);
+                self.chunk(chunk, state.chunk_info, state.file, state.bitmap);
             }
             State::WritingChunk(_) => unreachable!(),
         }

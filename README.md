@@ -74,12 +74,18 @@
     + No length given - this is simply the tail of the packet
 * Following packets are [Chunks](#chunk)
 
+* If the file is already on the server:
+    + If it hasn't been uploaded completely, resume upload by sending bitmap to client
+    + If it has been fully uploaded in the past, delete file and upload again
+
 ## Chunk
 
 * Chunk ID
     + Number of Chunk starting at 0
     + Encoded as little endian in n bytes
         - n = ceil(log2(number of chunks needed) / 8)
+
+* If chunk has been received by the Server in the past (i.e. is `1` in the bitmap), it's discarded
 
 ## Example: Uploading a File
 
@@ -126,3 +132,9 @@
     + Handle `unwrap`s
 * Which files does the server have?
 * How to handle a client updating the same file twice at the same time?
+
+## Out of Scope (for now)
+
+* File changes during upload
+* File partially uploaded, connection aborts, file changes, new connection, file upload continues
+* Congestion Control
