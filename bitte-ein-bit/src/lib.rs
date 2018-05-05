@@ -58,7 +58,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
         *byte |= (value as u8) << (bit % 8);
     }
 
-    /// Flips the bit at given position, returning its new value.
+    /// Flip the bit at given position, returning its new value.
     ///
     /// # Panics
     ///
@@ -69,6 +69,13 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
         let bitmask = 1 << (bit % 8);
         *byte ^= bitmask;
         *byte == bitmask
+    }
+
+    /// Reset all bits to `0`
+    pub fn reset(&mut self) {
+        for byte in self.buf.as_mut() {
+            *byte = 0;
+        }
     }
 
     /// Returns the number of bits

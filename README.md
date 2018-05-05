@@ -33,6 +33,7 @@
     + protocol is terminated by a status report from the server indicating that every chunk was received (bitmask of ones), which will **always** fit into a reasonably sized MTU due to RLE
 * Checksums / data integrity handled by UDP
 * Fixed, configurable MTU
+* Extensible by introducing new commands
 
 ## 3-Way-Handshake
 

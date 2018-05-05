@@ -109,6 +109,7 @@ impl Receiver {
 
         let bitmap_file_len = (chunk_info.num_chunks + 7) / 8;
         if !continue_upload {
+            debug!("New File");
             bitmap_file.set_len(bitmap_file_len).unwrap();
         }
 
@@ -117,11 +118,17 @@ impl Receiver {
                 .map_mut(&bitmap_file)
                 .unwrap()
         };
-        let bitmap = BitMap::with_length(mmap, chunk_info.num_chunks);
+        let mut bitmap = BitMap::with_length(mmap, chunk_info.num_chunks);
 
 
         let mut file = OpenOptions::new();
         if continue_upload {
+            debug!("Continue Upload file: {:x?}", bitmap);
+            if bitmap.all() {
+                warn!("Continue upload, but all chunks are already received???");
+                bitmap.reset();
+            }
+            // TODO: Send RLE bitmap to client
             file.append(true);
         }
         let file = file.create(true)
@@ -139,6 +146,16 @@ impl Receiver {
 
     pub fn chunk(&mut self, chunk: Chunk, chunk_info: ChunkInfo,
                  mut file: PollEvented2<File<StdFile>>, bitmap: BitMap<MmapMut>) {
+        if bitmap.get(chunk.index) {
+            trace!("Chunk {} already received, skipping", chunk.index);
+            self.state = State::WaitForChunk(WaitForChunk {
+                file,
+                bitmap,
+                buf: chunk.into_vec(),
+                chunk_info: chunk_info,
+            });
+            return;
+        }
         trace!("Switch to WritingChunk with len {}", chunk.as_ref().len());
         file.get_mut().seek(SeekFrom::Start(chunk.index * chunk_info.chunk_size)).unwrap();
         let future = io::write_all(file, chunk);
@@ -173,6 +190,7 @@ impl Stream for Receiver {
             // if last chunk
             if state.bitmap.all() {
                 info!("Last chunk received. Closing Connection");
+                // TODO: remove bitmap file
                 // close connection
                 return Ok(Async::Ready(None));
             }
