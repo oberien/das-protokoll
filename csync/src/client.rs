@@ -1,4 +1,4 @@
-use std::io::{Write, Cursor};
+use std::io::{Write, Cursor, Seek, SeekFrom};
 use std::time::{Instant, Duration};
 use std::net::SocketAddr;
 use std::fs::File as StdFile;
@@ -86,9 +86,11 @@ pub fn client() -> Result<(), Error>  {
 
                     Box::new(
                         io::read_exact(file, send_buf)
-                            .and_then(move |(file, send_buf)| {
+                            .and_then(move |(mut file, send_buf)| {
                                 let mut arr = [0u8; 8];
                                 (&mut arr[..]).write_u64::<LE>(chunk_cursor as u64).unwrap();
+
+                                file.get_mut().seek(SeekFrom::Start(chunk_cursor as u64 * chunk_size));
 
                                 let send_buf: Vec<u8> = arr.iter().cloned().take(index_field_size(filesize).index_field_size as usize).chain(send_buf.into_iter()).collect();
 
