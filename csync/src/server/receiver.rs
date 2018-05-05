@@ -3,17 +3,15 @@ use std::mem;
 use std::time::{Instant, Duration};
 use std::fs::{self, File as StdFile, OpenOptions};
 use std::path::{PathBuf, Path};
-use std::os::unix::fs::MetadataExt;
 
 use futures::{Stream, Async, Poll, Future};
 use futures::sync::mpsc::UnboundedSender;
-use tokio::io::{self, AsyncWrite};
+use tokio::io;
 use tokio::net::UdpSocket;
 use tokio::reactor::{PollEvented2, Handle};
 use tokio_file_unix::File;
 use ring::digest;
 use hex::ToHex;
-use take_mut;
 use bitte_ein_bit::BitMap;
 use memmap::{MmapMut, MmapOptions};
 
@@ -93,7 +91,7 @@ impl Receiver {
         if req_path.has_root() {
             req_path = req_path.strip_prefix("/").unwrap();
         }
-        let mut path = self.folder.join(req_path);
+        let path = self.folder.join(req_path);
         fs::create_dir_all(&path).unwrap();
         let file_path = path.join("file");
         let bitmap_path = path.join("bitmap");

@@ -23,8 +23,6 @@ mod client;
 mod codec;
 mod timeout;
 
-use std::path::PathBuf;
-
 use structopt::StructOpt;
 
 #[derive(StructOpt)]
