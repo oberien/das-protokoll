@@ -72,6 +72,7 @@ pub fn client() -> Result<(), Error>  {
                     // TODO: only exit once server has confirmed everything
                     Box::new(ok(Loop::Break(()))) as Box<Future<Item=_, Error=_> + Send>
                 } else if chunk_bitmap[chunk_cursor] {
+                    // server has confirmed, we can skip this
                     Box::new(ok(Loop::Continue(Client { socket, server, send_buf, recv_buf, rtt, file, chunk_bitmap, chunk_cursor: chunk_cursor + 1, last_chunk_size }))) as Box<Future<Item=_, Error=_> + Send>
                 } else {
                     send_buf.clear();

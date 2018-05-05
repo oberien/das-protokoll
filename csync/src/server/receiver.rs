@@ -121,7 +121,7 @@ impl Receiver {
 
         let mut file = OpenOptions::new();
         if continue_upload {
-            debug!("Continue Upload file: {:x?}", bitmap);
+            //debug!("Continue Upload file: {:x?}", bitmap);
             if bitmap.all() {
                 warn!("Continue upload, but all chunks are already received???");
                 bitmap.reset();
