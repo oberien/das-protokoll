@@ -16,6 +16,7 @@ extern crate take_mut;
 #[macro_use]
 extern crate structopt;
 extern crate bitte_ein_bit;
+extern crate memmap;
 
 mod server;
 mod client;

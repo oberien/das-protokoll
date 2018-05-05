@@ -28,11 +28,12 @@ pub fn client() -> Result<(), Error>  {
 
     let filename = "/usr/share/dict/cracklib-small";
     let file = StdFile::open(filename).unwrap();
-    let filesize = file.metadata().unwrap().len() as usize; // FIXME usize wtf
+    let filesize = file.metadata().unwrap().len();
 
-    let chunk_size = MTU - index_field_size(MTU, filesize);
-    let chunk_count = (filesize + chunk_size - 1) / chunk_size;
-    let last_chunk_size = filesize - (chunk_count - 1) * chunk_size;
+    let chunk_info = index_field_size(filesize);
+    let chunk_size = chunk_info.chunk_size;
+    let chunk_count = chunk_info.num_chunks;
+    let last_chunk_size = chunk_info.last_chunk_size;
     let file = File::new_nb(file).unwrap().into_io(runtime.reactor()).unwrap();
 
     Login { client_token: b"roflcopter" }.encode(&mut send_buf);
@@ -63,7 +64,7 @@ pub fn client() -> Result<(), Error>  {
                 recv_buf,
                 rtt,
                 file,
-                chunk_bitmap: BitVec::from_elem(chunk_count, false),
+                chunk_bitmap: BitVec::from_elem(chunk_count as usize, false),
                 chunk_cursor: 0,
                 last_chunk_size,
             }, move |Client { socket, server, mut send_buf, recv_buf, rtt, file, chunk_bitmap, chunk_cursor, last_chunk_size }| {
@@ -80,7 +81,7 @@ pub fn client() -> Result<(), Error>  {
                     } else {
                         chunk_size
                     };
-                    send_buf.resize(payload, 0);
+                    send_buf.resize(payload as usize, 0);
 
                     Box::new(
                         io::read_exact(file, send_buf)
@@ -88,7 +89,7 @@ pub fn client() -> Result<(), Error>  {
                                 let mut arr = [0u8; 8];
                                 (&mut arr[..]).write_u64::<LE>(chunk_cursor as u64).unwrap();
 
-                                let send_buf: Vec<u8> = arr.iter().cloned().take(index_field_size(MTU, filesize)).chain(send_buf.into_iter()).collect();
+                                let send_buf: Vec<u8> = arr.iter().cloned().take(index_field_size(filesize).index_field_size as usize).chain(send_buf.into_iter()).collect();
 
                                 let server = server;
                                 socket.send_dgram(send_buf, &server).map(move |x| (x, file, server))
@@ -115,7 +116,7 @@ struct Client {
     file: PollEvented<File<StdFile>>, // we only ever read whole chunks out of this
     chunk_bitmap: BitVec,
     chunk_cursor: usize,
-    last_chunk_size: usize,
+    last_chunk_size: u64,
 }
 
 // draft v1: pump as much as possible

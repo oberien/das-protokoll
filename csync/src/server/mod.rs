@@ -22,7 +22,7 @@ pub fn run() {
     let listener = listener::Listener::new(listener);
 
     let server = listener.for_each(|(buf, size, addr)| {
-        debug!("connection from {}: {:?}", addr, &buf[..size]);
+        trace!("connection from {}: {:?}", addr, &buf[..size]);
         let client = handle_client(buf, size, addr);
         tokio::spawn(client);
         Ok(())

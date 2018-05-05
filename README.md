@@ -123,5 +123,6 @@
 ## Open Questions
 
 * Error messages to Client
+    + Handle `unwrap`s
 * Which files does the server have?
-
+* How to handle a client updating the same file twice at the same time?

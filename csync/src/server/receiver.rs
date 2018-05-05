@@ -1,8 +1,9 @@
 use std::io::{Seek, SeekFrom, Error as IoError, ErrorKind};
 use std::mem;
 use std::time::{Instant, Duration};
-use std::fs::{self, File as StdFile};
+use std::fs::{self, File as StdFile, OpenOptions};
 use std::path::{PathBuf, Path};
+use std::os::unix::fs::MetadataExt;
 
 use futures::{Stream, Async, Poll, Future};
 use futures::sync::mpsc::UnboundedSender;
@@ -13,7 +14,8 @@ use tokio_file_unix::File;
 use ring::digest;
 use hex::ToHex;
 use take_mut;
-use bit_vec::BitVec;
+use bitte_ein_bit::BitMap;
+use memmap::{MmapMut, MmapOptions};
 
 use codec::{self, MTU, Login, Command, UploadRequest, Chunk};
 
@@ -38,23 +40,24 @@ pub struct WaitForAckAndCommand {
 
 pub struct WaitForChunk {
     file: PollEvented2<File<StdFile>>,
+    bitmap: BitMap<MmapMut>,
     buf: Vec<u8>,
-    index_field_size: usize,
-    len_left: usize,
+    index_field_size: u64,
 }
 
 type WriteChunk = io::WriteAll<PollEvented2<File<StdFile>>, Chunk>;
 
 pub struct WritingChunk {
-    index_field_size: usize,
-    len_left: usize,
+    bitmap: BitMap<MmapMut>,
+    index_field_size: u64,
     future: WriteChunk,
 }
 
 impl Receiver {
     pub fn new(socket: UdpSocket, login: Login, tx: UnboundedSender<([u8; MTU], usize)>) -> Receiver {
         tx.unbounded_send(([0u8; MTU], 0)).unwrap();
-        debug!("Login: {:?}", login);
+        debug!("Login");
+        trace!("Client Token: {:?}", login);
         let sha = digest::digest(&digest::SHA256, login.client_token);
         let mut hex = String::with_capacity(digest::SHA256_OUTPUT_LEN * 2);
         sha.as_ref().write_hex(&mut hex).unwrap();
@@ -84,37 +87,61 @@ impl Receiver {
 
     pub fn upload_request(&mut self, req: UploadRequest) {
         debug!("upload request: {:?}", req);
-        // TODO: handle connection abort / write bitvec to disk
         let mut req_path = Path::new(req.path);
         if req_path.has_root() {
             req_path = req_path.strip_prefix("/").unwrap();
         }
         let mut path = self.folder.join(req_path);
         fs::create_dir_all(&path).unwrap();
-        path.push("file");
-        let file = StdFile::create(path).unwrap();
+        let file_path = path.join("file");
+        path.push("bitmap");
+        let file = StdFile::create(file_path).unwrap();
+        file.set_len(req.length as u64).unwrap();
+        let bitmap_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .append(true)
+            .create(true)
+            .open(path)
+            .unwrap();
+
+        let chunk_info = codec::index_field_size(req.length);
+
+        let bitmap_file_len = (chunk_info.num_chunks + 7) / 8;
+        if bitmap_file.metadata().unwrap().size() < bitmap_file_len {
+            bitmap_file.set_len(0).unwrap();
+            bitmap_file.set_len(bitmap_file_len).unwrap();
+        }
+
+        let mmap = unsafe {
+            MmapOptions::new()
+                .map_mut(&bitmap_file)
+                .unwrap()
+        };
+        let bitmap = BitMap::with_length(mmap, chunk_info.num_chunks);
+
         self.state = State::WaitForChunk(WaitForChunk {
             file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
+            bitmap,
             buf: Vec::with_capacity(MTU),
-            index_field_size: codec::index_field_size(MTU, req.length),
-            len_left: req.length,
+            index_field_size: chunk_info.index_field_size,
         });
     }
 
-    pub fn chunk(&mut self, chunk: Chunk, index_field_size: usize, len_left: usize,
-                 file: PollEvented2<File<StdFile>>) {
+    pub fn chunk(&mut self, chunk: Chunk, index_field_size: u64,
+                 file: PollEvented2<File<StdFile>>, bitmap: BitMap<MmapMut>) {
         trace!("Switch to WritingChunk with len {}", chunk.as_ref().len());
+        file.get_mut().seek(SeekFrom::Start())
         let future = io::write_all(file, chunk);
         self.state = State::WritingChunk(WritingChunk {
+            bitmap,
             index_field_size,
-            len_left,
             future,
         });
+        // TODO: Reordering / seeking
         // TODO: Continue old upload
         // TODO: Handle existing completed files
         // TODO: length check of chunks to ensure max usage of MTU
-        // TODO: BitVec
-        // TODO: Write BitVec to Disk
     }
 }
 
@@ -133,11 +160,10 @@ impl Stream for Receiver {
 
             let state = mem::replace(&mut self.state, State::Invalid);
             let mut state = if let State::WritingChunk(state) = state { state } else { unreachable!() };
-            state.len_left -= chunk.as_ref().len();
+            state.bitmap.set(chunk.index, true);
 
             // if last chunk
-            // TODO: Until bitmap is full
-            if state.len_left == 0 {
+            if state.bitmap.all() {
                 info!("Last chunk received. Closing Connection");
                 // close connection
                 return Ok(Async::Ready(None));
@@ -146,8 +172,8 @@ impl Stream for Receiver {
             self.state = State::WaitForChunk(WaitForChunk {
                 file,
                 buf: chunk.into_vec(),
+                bitmap: state.bitmap,
                 index_field_size: state.index_field_size,
-                len_left: state.len_left,
             });
         }
 
@@ -170,7 +196,7 @@ impl Stream for Receiver {
                 let state = mem::replace(&mut self.state, State::Invalid);
                 let state = if let State::WaitForChunk(state) = state { state } else { unreachable!() };
                 let chunk = Chunk::decode(state.buf, size, state.index_field_size);
-                self.chunk(chunk, state.index_field_size, state.len_left, state.file);
+                self.chunk(chunk, state.index_field_size, state.file, state.bitmap);
             }
             State::WritingChunk(_) => unreachable!(),
         }

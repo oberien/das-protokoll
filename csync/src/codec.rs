@@ -20,11 +20,11 @@ pub enum Command<'a> {
 #[derive(Debug)]
 pub struct UploadRequest<'a> {
     pub path: &'a str,
-    pub length: usize,
+    pub length: u64,
 }
 
 pub struct Chunk {
-    index_field_size: usize,
+    index_field_size: u64,
     /// buffered for easy access
     pub index: u64,
     /// serialized data with index in the front
@@ -79,18 +79,18 @@ impl<'a> UploadRequest<'a> {
         let path = &src.into_inner()[pos..];
         Ok(UploadRequest {
             path: str::from_utf8(path)?,
-            length: length as usize,
+            length: length,
         })
     }
 }
 
 impl Chunk {
-    pub fn new(mut buf: Vec<u8>, index: u64, index_field_size: usize, data_size: usize) -> Chunk {
+    pub fn new(mut buf: Vec<u8>, index: u64, index_field_size: u64, data_size: usize) -> Chunk {
         buf.clear();
         debug_assert!(0 < index_field_size && index_field_size <= 8);
 
         (&mut buf).write_u64::<LE>(index).unwrap();
-        buf.resize(index_field_size + data_size, 0);
+        buf.resize(index_field_size as usize + data_size, 0);
 
         Chunk {
             index_field_size,
@@ -99,9 +99,9 @@ impl Chunk {
         }
     }
 
-    pub fn decode(src: Vec<u8>, size: usize, index_field_size: usize) -> Self {
+    pub fn decode(src: Vec<u8>, size: usize, index_field_size: u64) -> Self {
         let mut buf = [0u8; 8];
-        (&mut buf[..index_field_size]).copy_from_slice(&src[..index_field_size]);
+        (&mut buf[..index_field_size as usize]).copy_from_slice(&src[..index_field_size as usize]);
         let index = (&buf[..]).read_u64::<LE>().unwrap();
 
         Chunk {
@@ -118,25 +118,43 @@ impl Chunk {
 
 impl AsRef<[u8]> for Chunk {
     fn as_ref(&self) -> &[u8] {
-        &self.buf[self.index_field_size..]
+        &self.buf[self.index_field_size as usize..]
     }
 }
 
 impl AsMut<[u8]> for Chunk {
     fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.buf[self.index_field_size..]
+        &mut self.buf[self.index_field_size as usize..]
     }
 }
 
-pub fn index_field_size(mtu: usize, length: usize) -> usize {
+pub struct ChunkInfo {
+    pub index_field_size: u64,
+    pub chunk_size: u64,
+    pub num_chunks: u64,
+    pub last_chunk_size: u64,
+}
+
+/// Calculates and returns the ChunkInfo for the given file length.
+pub fn index_field_size(length: u64) -> ChunkInfo {
     let mut index_field_size = 1;
+    let mut chunk_size;
+    let mut num_chunks;
     loop {
-        let size = mtu - index_field_size;
-        let num = (length + size - 1) / size;
-        if num <= 1 << (index_field_size * 8 - 1) {
-            return index_field_size;
+        chunk_size = MTU as u64 - index_field_size;
+        // prevent overflow
+        num_chunks = length / chunk_size + (length % chunk_size != 0) as u64;
+        if num_chunks <= 1 << (index_field_size * 8) {
+            break;
         }
         index_field_size += 1;
+    }
+
+    ChunkInfo {
+        index_field_size,
+        chunk_size,
+        num_chunks,
+        last_chunk_size: length % chunk_size,
     }
 }
 

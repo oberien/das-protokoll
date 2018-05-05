@@ -7,13 +7,13 @@ pub use range::RangeArgument;
 
 pub struct BitMap<T: AsRef<[u8]> + AsMut<[u8]>> {
     buf: T,
-    num_bits: usize,
+    num_bits: u64,
 }
 
 impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     /// Create a new BitMap from an underlying buffer.
     pub fn new(buf: T) -> BitMap<T> {
-        let num_bits = buf.as_ref().len() * 8;
+        let num_bits = buf.as_ref().len() as u64 * 8;
         BitMap::with_length(buf, num_bits)
     }
 
@@ -22,8 +22,8 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     /// # Panics
     ///
     /// Panics if the passed number of bits do not fit into the buffer.
-    pub fn with_length(buf: T, num_bits: usize) -> BitMap<T> {
-        if buf.as_ref().len() * 8 < num_bits {
+    pub fn with_length(buf: T, num_bits: u64) -> BitMap<T> {
+        if buf.as_ref().len() as u64 * 8 < num_bits {
             panic!("Buf too small for {} bits", num_bits);
         }
         BitMap {
@@ -37,9 +37,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     /// # Panics
     ///
     /// Panics if the provided position is out of bounds.
-    pub fn get(&self, bit: usize) -> bool {
+    pub fn get(&self, bit: u64) -> bool {
         self.check(bit);
-        let byte = self.buf.as_ref()[bit / 8];
+        let byte = self.buf.as_ref()[(bit / 8) as usize];
         let bitmask = 1 << (bit % 8);
         (byte & bitmask) == bitmask
     }
@@ -49,9 +49,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     /// # Panics
     ///
     /// This functions panics if the bit-index is out of bounds.
-    pub fn set(&mut self, bit: usize, value: bool) {
+    pub fn set(&mut self, bit: u64, value: bool) {
         self.check(bit);
-        let byte = &mut self.buf.as_mut()[bit / 8];
+        let byte = &mut self.buf.as_mut()[(bit / 8) as usize];
         let bitmask = 1 << (bit % 8);
         *byte &= !bitmask;
         *byte |= (value as u8) << (bit % 8);
@@ -62,16 +62,16 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     /// # Panics
     ///
     /// Panics if the index is out of bounds.
-    pub fn flip_bit(&mut self, bit: usize) -> bool {
+    pub fn flip_bit(&mut self, bit: u64) -> bool {
         self.check(bit);
-        let byte = &mut self.buf.as_mut()[bit / 8];
+        let byte = &mut self.buf.as_mut()[(bit / 8) as usize];
         let bitmask = 1 << (bit % 8);
         *byte ^= bitmask;
         *byte == bitmask
     }
 
     /// Returns the number of bits
-    pub fn num_bits(&self) -> usize {
+    pub fn num_bits(&self) -> u64 {
         self.num_bits
     }
 
@@ -108,7 +108,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     }
 
     /// Creates an iterator over a range of bits
-    pub fn iter_range<R: RangeArgument<usize>>(&self, range: R) -> Iter<T> {
+    pub fn iter_range<R: RangeArgument<u64>>(&self, range: R) -> Iter<T> {
         Iter {
             bitmap: self,
             front: range.start().unwrap_or(0),
@@ -117,7 +117,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     }
 
     #[inline]
-    fn check(&self, bit: usize) {
+    fn check(&self, bit: u64) {
         if bit > self.num_bits {
             panic!("bit index out of bounds: the number of bits is {} but the the index is {}",
                    self.num_bits, bit);
@@ -131,10 +131,10 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> From<T> for BitMap<T> {
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> Index<usize> for BitMap<T> {
+impl<T: AsRef<[u8]> + AsMut<[u8]>> Index<u64> for BitMap<T> {
     type Output = bool;
 
-    fn index(&self, bit: usize) -> &Self::Output {
+    fn index(&self, bit: u64) -> &Self::Output {
         if self.get(bit) {
             &true
         } else {
@@ -154,8 +154,8 @@ impl<'a, T: AsRef<[u8]> + AsMut<[u8]>> IntoIterator for &'a BitMap<T> {
 
 pub struct Iter<'a, T: AsRef<[u8]> + AsMut<[u8]> + 'a> {
     bitmap: &'a BitMap<T>,
-    front: usize,
-    back: usize,
+    front: u64,
+    back: u64,
 }
 
 impl<'a, T: AsRef<[u8]> + AsMut<[u8]>> Iterator for Iter<'a, T> {
