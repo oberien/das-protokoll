@@ -191,18 +191,22 @@ where
 mod test {
     use super::*;
 
+    fn test_rle(bitmap: &[u8], result: &[u8]) {
+        let mut enc = Vec::new();
+        let mut bitmap = BitMap::new(bitmap);
+        let written = write_runlength_encoded(&bitmap, &mut enc).unwrap();
+        assert_eq!(enc, result);
+        assert_eq!(written, result.len());
+    }
+
     #[test]
     fn test_runlength() {
-        let mut bitmap = BitMap::new([0b0000_1011u8]);
-        let mut enc = [0u8; 5];
-        let written = write_runlength_encoded(&bitmap, Cursor::new(&mut enc[..])).unwrap();
-        assert_eq!(written, 4);
-        assert_eq!(enc, [2, 1, 1, 4, 0]);
-
-        let mut bitmap = BitMap::new([0b1000_1011u8]);
-        let mut enc = [0u8; 5];
-        let written = write_runlength_encoded(&bitmap, Cursor::new(&mut enc[..])).unwrap();
-        assert_eq!(written, 5);
-        assert_eq!(enc, [2, 1, 1, 3, 1]);
+        test_rle(&[0b1111_1111], &[8]);
+        test_rle(&[0b0000_0000], &[0, 8]);
+        test_rle(&[0b0000_0001], &[1, 7]);
+        test_rle(&[0b1000_0000], &[0, 7, 1]);
+        test_rle(&[0b0000_1011], &[2, 1, 1, 4]);
+        test_rle(&[0b1000_1011], &[2, 1, 1, 3, 1]);
+        test_rle(&[0b1000_1011, 0b0000_1111], &[2, 1, 1, 3, 5, 4]);
     }
 }
