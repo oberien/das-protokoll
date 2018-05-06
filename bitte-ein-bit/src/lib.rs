@@ -6,12 +6,12 @@ mod range;
 
 pub use range::RangeArgument;
 
-pub struct BitMap<T: AsRef<[u8]> + AsMut<[u8]>> {
+pub struct BitMap<T> {
     buf: T,
     num_bits: u64,
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
+impl<T: AsRef<[u8]>> BitMap<T> {
     /// Create a new BitMap from an underlying buffer.
     pub fn new(buf: T) -> BitMap<T> {
         let num_bits = buf.as_ref().len() as u64 * 8;
@@ -44,7 +44,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
         let bitmask = 1 << (bit % 8);
         (byte & bitmask) == bitmask
     }
+}
 
+impl<T: AsMut<[u8]>> BitMap<T> {
     /// Set the bit at given position to given value.
     ///
     /// # Panics
@@ -77,7 +79,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
             *byte = 0;
         }
     }
+}
 
+impl<T> BitMap<T> {
     /// Returns the number of bits
     pub fn num_bits(&self) -> u64 {
         self.num_bits
@@ -97,7 +101,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     pub fn into_inner(self) -> T {
         self.buf
     }
+}
 
+impl<T: AsRef<[u8]>> BitMap<T> {
     /// Returns `true` if all bits are `1`.
     pub fn all(&self) -> bool {
         // TODO: optimize
@@ -123,7 +129,9 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
             back: range.end().unwrap_or(self.num_bits),
         }
     }
+}
 
+impl<T> BitMap<T> {
     #[inline]
     fn check(&self, bit: u64) {
         if bit > self.num_bits {
@@ -133,13 +141,13 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> BitMap<T> {
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> From<T> for BitMap<T> {
+impl<T: AsRef<[u8]>> From<T> for BitMap<T> {
     fn from(buf: T) -> Self {
         BitMap::new(buf)
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> Index<u64> for BitMap<T> {
+impl<T: AsRef<[u8]>> Index<u64> for BitMap<T> {
     type Output = bool;
 
     fn index(&self, bit: u64) -> &Self::Output {
@@ -151,7 +159,7 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Index<u64> for BitMap<T> {
     }
 }
 
-impl<'a, T: AsRef<[u8]> + AsMut<[u8]>> IntoIterator for &'a BitMap<T> {
+impl<'a, T: AsRef<[u8]>> IntoIterator for &'a BitMap<T> {
     type Item = bool;
     type IntoIter = Iter<'a, T>;
 
@@ -160,13 +168,13 @@ impl<'a, T: AsRef<[u8]> + AsMut<[u8]>> IntoIterator for &'a BitMap<T> {
     }
 }
 
-pub struct Iter<'a, T: AsRef<[u8]> + AsMut<[u8]> + 'a> {
+pub struct Iter<'a, T: AsRef<[u8]> + 'a> {
     bitmap: &'a BitMap<T>,
     front: u64,
     back: u64,
 }
 
-impl<'a, T: AsRef<[u8]> + AsMut<[u8]>> Iterator for Iter<'a, T> {
+impl<'a, T: AsRef<[u8]>> Iterator for Iter<'a, T> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -179,7 +187,7 @@ impl<'a, T: AsRef<[u8]> + AsMut<[u8]>> Iterator for Iter<'a, T> {
     }
 }
 
-impl<'a, T: AsRef<[u8]> + AsMut<[u8]> + 'a> DoubleEndedIterator for Iter<'a, T> {
+impl<'a, T: AsRef<[u8]> + 'a> DoubleEndedIterator for Iter<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         if self.front == self.back {
             return None;

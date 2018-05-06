@@ -160,7 +160,7 @@ pub fn index_field_size(length: u64) -> ChunkInfo {
 
 pub fn write_runlength_encoded<T, W>(bitmap: &BitMap<T>, mut w: W) -> io::Result<usize>
 where
-    T: AsRef<[u8]> + AsMut<[u8]>,
+    T: AsRef<[u8]>,
     W: Write,
 {
     let mut count = 0;
