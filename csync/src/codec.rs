@@ -1,4 +1,4 @@
-use std::io::{self, Cursor, Write};
+use std::io::{self, Cursor, Write, ErrorKind};
 
 use std::str::{self, Utf8Error};
 use varmint::{self, ReadVarInt, WriteVarInt};
@@ -187,11 +187,31 @@ where
     Ok(written)
 }
 
+pub struct RunlengthIter<T: AsRef<[u8]>>(Cursor<T>);
+
+impl<T: AsRef<[u8]>> RunlengthIter<T> {
+    pub fn new(t: T) -> RunlengthIter<T> {
+        RunlengthIter(Cursor::new(t))
+    }
+}
+
+impl<T: AsRef<[u8]>> Iterator for RunlengthIter<T> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        match self.0.read_u64_varint() {
+            Ok(x) => Some(x),
+            Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => None,
+            Err(e) => panic!("unexpected read error {:?}", e),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
-    fn test_rle(bitmap: &[u8], result: &[u8]) {
+    fn test_rle_enc(bitmap: &[u8], result: &[u8]) {
         let mut enc = Vec::new();
         let mut bitmap = BitMap::new(bitmap);
         let written = write_runlength_encoded(&bitmap, &mut enc).unwrap();
@@ -200,13 +220,30 @@ mod test {
     }
 
     #[test]
-    fn test_runlength() {
-        test_rle(&[0b1111_1111], &[8]);
-        test_rle(&[0b0000_0000], &[0, 8]);
-        test_rle(&[0b0000_0001], &[1, 7]);
-        test_rle(&[0b1000_0000], &[0, 7, 1]);
-        test_rle(&[0b0000_1011], &[2, 1, 1, 4]);
-        test_rle(&[0b1000_1011], &[2, 1, 1, 3, 1]);
-        test_rle(&[0b1000_1011, 0b0000_1111], &[2, 1, 1, 3, 5, 4]);
+    fn test_runlength_encode() {
+        test_rle_enc(&[0b1111_1111], &[8]);
+        test_rle_enc(&[0b0000_0000], &[0, 8]);
+        test_rle_enc(&[0b0000_0001], &[1, 7]);
+        test_rle_enc(&[0b1000_0000], &[0, 7, 1]);
+        test_rle_enc(&[0b0000_1011], &[2, 1, 1, 4]);
+        test_rle_enc(&[0b1000_1011], &[2, 1, 1, 3, 1]);
+        test_rle_enc(&[0b1000_1011, 0b0000_1111], &[2, 1, 1, 3, 5, 4]);
+    }
+
+    #[test]
+    fn test_runlength_decode() {
+        let vector: &[(&[u8], &[u64])] = &[
+            (&[], &[]),
+            (&[0], &[0]),
+            (&[1, 2, 3], &[1, 2, 3]),
+            (&[1, 0x80, 1, 2], &[1, 0x80, 2]),
+            (&[1, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01, 2], &[1, 0xffffffff_ffffffff, 2]),
+            (&[1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x40, 2], &[1, 0x40000000_00000000, 2]),
+        ];
+
+        for &(message, numbers) in vector {
+            let decoded: Vec<_> = RunlengthIter::new(message).collect();
+            assert_eq!(decoded, numbers);
+        }
     }
 }
