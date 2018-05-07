@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::io;
 use std::net::UdpSocket as StdUdpSocket;
 use std::time::Duration;
+use std::sync::{Arc, Mutex};
 
 use futures::sync::mpsc;
 use futures::{Future, Stream, Sink};
@@ -9,6 +10,8 @@ use tokio::net::UdpSocket;
 use tokio::reactor::Handle;
 use tokio;
 use net2;
+use memmap::MmapMut;
+use bitte_ein_bit::BitMap;
 
 use codec::{MTU, Login};
 use timeout::TimeoutStream;
@@ -16,6 +19,13 @@ use timeout::TimeoutStream;
 mod listener;
 mod receiver;
 mod sender;
+mod congestion;
+
+pub enum ChannelMessage {
+    Ack,
+    UploadStart(Arc<Mutex<BitMap<MmapMut>>>),
+    UploadStatus,
+}
 
 pub fn run() {
     let listener = get_socket().expect("Can't bind main UdpSocket");

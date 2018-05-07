@@ -1,8 +1,9 @@
 use std::io::{Seek, SeekFrom, Error as IoError, ErrorKind};
 use std::mem;
-use std::time::{Instant, Duration};
+use std::time::Duration;
 use std::fs::{self, File as StdFile, OpenOptions};
 use std::path::{PathBuf, Path};
+use std::sync::{Arc, Mutex};
 
 use futures::{Stream, Async, Poll, Future};
 use futures::sync::mpsc::UnboundedSender;
@@ -16,29 +17,28 @@ use bitte_ein_bit::BitMap;
 use memmap::{MmapMut, MmapOptions};
 
 use codec::{self, MTU, Login, Command, UploadRequest, Chunk, ChunkInfo};
+use server::congestion::CongestionInfo;
+use server::ChannelMessage;
 
 pub struct Receiver {
     state: State,
     socket: UdpSocket,
-    tx: UnboundedSender<([u8; MTU], usize)>,
+    tx: UnboundedSender<ChannelMessage>,
     rtt: Duration,
     folder: PathBuf,
+    congestion: CongestionInfo,
 }
 
 pub enum State {
     Invalid,
-    WaitForAckAndCommand(WaitForAckAndCommand),
+    WaitForAckAndCommand,
     WaitForChunk(WaitForChunk),
     WritingChunk(WritingChunk),
 }
 
-pub struct WaitForAckAndCommand {
-    sent: Instant,
-}
-
 pub struct WaitForChunk {
     file: PollEvented2<File<StdFile>>,
-    bitmap: BitMap<MmapMut>,
+    bitmap: Arc<Mutex<BitMap<MmapMut>>>,
     buf: Vec<u8>,
     chunk_info: ChunkInfo,
 }
@@ -46,14 +46,16 @@ pub struct WaitForChunk {
 type WriteChunk = io::WriteAll<PollEvented2<File<StdFile>>, Chunk>;
 
 pub struct WritingChunk {
-    bitmap: BitMap<MmapMut>,
+    bitmap: Arc<Mutex<BitMap<MmapMut>>>,
     chunk_info: ChunkInfo,
     future: WriteChunk,
 }
 
 impl Receiver {
-    pub fn new(socket: UdpSocket, login: Login, tx: UnboundedSender<([u8; MTU], usize)>) -> Receiver {
-        tx.unbounded_send(([0u8; MTU], 0)).unwrap();
+    pub fn new(socket: UdpSocket, login: Login, tx: UnboundedSender<ChannelMessage>) -> Receiver {
+        tx.unbounded_send(ChannelMessage::Ack).unwrap();
+        let mut congestion = CongestionInfo::new();
+        congestion.start_rtt();
         debug!("Login");
         trace!("Client Token: {:?}", login);
         let sha = digest::digest(&digest::SHA256, login.client_token);
@@ -63,18 +65,17 @@ impl Receiver {
         path.push(hex);
         debug!("Folder: {}", path.display());
         Receiver {
-            state: State::WaitForAckAndCommand(WaitForAckAndCommand {
-                sent: Instant::now(),
-            }),
+            state: State::WaitForAckAndCommand,
             socket,
             tx,
             rtt: Duration::from_secs(0),
             folder: path,
+            congestion,
         }
     }
 
-    pub fn ack(&mut self, sent: Instant, command: Command) {
-        self.rtt = Instant::now() - sent;
+    pub fn ack(&mut self, command: Command) {
+        self.congestion.stop_rtt();
         debug!("Ack from Client, RTT {}ms", self.rtt.as_secs() * 1000 + self.rtt.subsec_nanos() as u64 / 1_000_000);
 
         match command {
@@ -134,6 +135,9 @@ impl Receiver {
             .open(file_path).unwrap();
         file.set_len(req.length as u64).unwrap();
 
+        let bitmap = Arc::new(Mutex::new(bitmap));
+        self.tx.unbounded_send(ChannelMessage::UploadStart(Arc::clone(&bitmap))).unwrap();
+
         self.state = State::WaitForChunk(WaitForChunk {
             file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
             bitmap,
@@ -143,9 +147,10 @@ impl Receiver {
     }
 
     pub fn chunk(&mut self, chunk: Chunk, chunk_info: ChunkInfo,
-                 mut file: PollEvented2<File<StdFile>>, bitmap: BitMap<MmapMut>) {
-        if bitmap.get(chunk.index) {
-            trace!("Chunk {} already received, skipping", chunk.index);
+                 mut file: PollEvented2<File<StdFile>>, bitmap: Arc<Mutex<BitMap<MmapMut>>>) {
+        self.congestion.ipt_packet();
+        if bitmap.lock().unwrap().get(chunk.index) {
+            info!("Chunk {} already received, skipping", chunk.index);
             self.state = State::WaitForChunk(WaitForChunk {
                 file,
                 bitmap,
@@ -162,8 +167,6 @@ impl Receiver {
             chunk_info,
             future,
         });
-        // TODO: Continue old upload
-        // TODO: Handle existing completed files
         // TODO: length check of chunks to ensure max usage of MTU
     }
 }
@@ -173,6 +176,14 @@ impl Stream for Receiver {
     type Error = IoError;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        match self.congestion.poll() {
+            Ok(Async::Ready(Some(()))) => {
+                self.tx.unbounded_send(ChannelMessage::UploadStatus).unwrap();
+            }
+            Ok(Async::NotReady) => {}
+            Ok(Async::Ready(None)) => unreachable!(),
+            Err(e) => return Err(io::Error::new(io::ErrorKind::Other, e))
+        }
         if let State::WritingChunk(_) = self.state {
             trace!("Try writing Chunk");
             let (file, chunk) = {
@@ -183,12 +194,12 @@ impl Stream for Receiver {
 
             let state = mem::replace(&mut self.state, State::Invalid);
             let mut state = if let State::WritingChunk(state) = state { state } else { unreachable!() };
-            state.bitmap.set(chunk.index, true);
+            state.bitmap.lock().unwrap().set(chunk.index, true);
 
             // if last chunk
-            if state.bitmap.all() {
+            if state.bitmap.lock().unwrap().all() {
                 info!("Last chunk received. Closing Connection");
-                // TODO: remove bitmap file
+                // TODO: remove bitmap file in sendbitmap path
                 // close connection
                 return Ok(Async::Ready(None));
             }
@@ -203,12 +214,12 @@ impl Stream for Receiver {
 
         match self.state {
             State::Invalid => unreachable!(),
-            State::WaitForAckAndCommand(WaitForAckAndCommand { sent }) => {
+            State::WaitForAckAndCommand => {
                 let mut buf = [0u8; MTU];
                 let size = try_ready!(self.socket.poll_recv(&mut buf));
                 let command = Command::decode(&mut buf[..size])
                     .map_err(|e| IoError::new(ErrorKind::InvalidData, e))?;
-                self.ack(sent, command)
+                self.ack(command)
             },
             State::WaitForChunk(_) => {
                 let size = if let State::WaitForChunk(WaitForChunk { ref mut buf, .. }) = self.state {

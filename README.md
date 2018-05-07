@@ -100,8 +100,9 @@
 
 * RTT: moving average
 * Inter packet times: moving average
-* magic function `floor(x / ln(x + 1))`
+* magic function `num_packets = floor(pps / ln(pps + 1))`
 * we calculate packets/sec as input for this function
+    + `pps = 1 / ipt`
 * it outputs the status interval (number of packets until we send a status update)
 
 ## Congestion Control
