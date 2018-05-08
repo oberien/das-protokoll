@@ -103,7 +103,7 @@ impl Receiver {
             .read(true)
             .append(true)
             .create(true)
-            .open(bitmap_path)
+            .open(bitmap_path.clone())
             .unwrap();
 
         let bitmap_file_len = (chunk_info.num_chunks + 7) / 8;
@@ -127,7 +127,6 @@ impl Receiver {
                 warn!("Continue upload, but all chunks are already received???");
                 bitmap.reset();
             }
-            // TODO: Send RLE bitmap to client
             file.append(true);
         }
         let file = file.create(true)
@@ -136,7 +135,7 @@ impl Receiver {
         file.set_len(req.length as u64).unwrap();
 
         let bitmap = Arc::new(Mutex::new(bitmap));
-        self.tx.unbounded_send(ChannelMessage::UploadStart(Arc::clone(&bitmap))).unwrap();
+        self.tx.unbounded_send(ChannelMessage::UploadStart(Arc::clone(&bitmap), bitmap_path)).unwrap();
 
         self.state = State::WaitForChunk(WaitForChunk {
             file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
@@ -198,17 +197,16 @@ impl Stream for Receiver {
                 let mut bitmap = state.bitmap.lock().unwrap();
                 bitmap.set(chunk.index, true);
 
-                if bitmap.zeroes().is_power_of_two() {
+                if bitmap.zeroes().is_power_of_two() || bitmap.zeroes() == 0 {
                     debug!("Power of 2: {}", bitmap.zeroes());
-                    self.tx.unbounded_send(ChannelMessage::UploadStatus);
+                    self.tx.unbounded_send(ChannelMessage::UploadStatus).unwrap();
                 }
 
                 // if last chunk
                 if bitmap.all() {
                     info!("Last chunk received. Closing Connection");
-                    // TODO: remove bitmap file in sendbitmap path
-                    // close connection
-                    return Ok(Async::Ready(None));
+                    // TODO: Proper FIN handling
+                    return Ok(Async::NotReady);
                 }
             }
             trace!("Switch to WaitForChunk");

@@ -3,6 +3,7 @@ use std::io;
 use std::net::UdpSocket as StdUdpSocket;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 
 use futures::sync::mpsc;
 use futures::{Future, Stream, Sink};
@@ -23,7 +24,7 @@ mod congestion;
 
 pub enum ChannelMessage {
     Ack,
-    UploadStart(Arc<Mutex<BitMap<MmapMut>>>),
+    UploadStart(Arc<Mutex<BitMap<MmapMut>>>, PathBuf),
     UploadStatus,
 }
 
