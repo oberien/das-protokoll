@@ -105,6 +105,10 @@
     + `pps = 1 / ipt`
 * it outputs the status interval (number of packets until we send a status update)
 
+* If the number of zero-bits in the bitmap is a power of two, send a status update
+    + Ensures enough status updates are sent in the end, when the number of missing chunks is low
+    + Doesn't reset periodic status update counters
+
 ## Congestion Control
 
 * ?? Initially Client sends burst of packets for `RTT / m` milliseconds ??
@@ -128,12 +132,17 @@
 * Foreslashes inside filenames must be escaped to differentiate them from folders
 
 
-## Open Questions
+## Open Questions / TODO
 
 * Error messages to Client
     + Handle `unwrap`s
 * Which files does the server have?
 * How to handle a client updating the same file twice at the same time?
+* How to handle successful connection FIN?
+    + What if last status update of server gets lost, so the client does not know that it's over?
+* Slow Start
+    + How often should a status update be sent in the beginning?
+* Check usage of usize vs u64 everywhere to make sure we support u64 large files
 
 ## Out of Scope (for now)
 

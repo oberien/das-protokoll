@@ -9,6 +9,7 @@ pub use range::RangeArgument;
 pub struct BitMap<T> {
     buf: T,
     num_bits: u64,
+    zeroes: u64,
 }
 
 impl<T: AsRef<[u8]>> BitMap<T> {
@@ -27,10 +28,14 @@ impl<T: AsRef<[u8]>> BitMap<T> {
         if buf.as_ref().len() as u64 * 8 < num_bits {
             panic!("Buf too small for {} bits", num_bits);
         }
-        BitMap {
+        let mut map = BitMap {
             buf,
             num_bits,
-        }
+            zeroes: 0,
+        };
+
+        map.zeroes = map.iter().filter(|x| !x).count() as u64;
+        map
     }
 
     /// Get the bit at given position.
@@ -47,17 +52,28 @@ impl<T: AsRef<[u8]>> BitMap<T> {
 }
 
 impl<T: AsMut<[u8]>> BitMap<T> {
-    /// Set the bit at given position to given value.
+    /// Set the bit at given position to given value and returns its old value.
     ///
     /// # Panics
     ///
     /// This functions panics if the bit-index is out of bounds.
-    pub fn set(&mut self, bit: u64, value: bool) {
+    pub fn set(&mut self, bit: u64, new: bool) -> bool {
         self.check(bit);
         let byte = &mut self.buf.as_mut()[(bit / 8) as usize];
         let bitmask = 1 << (bit % 8);
-        *byte &= !bitmask;
-        *byte |= (value as u8) << (bit % 8);
+        let old = (*byte & bitmask) == bitmask;
+
+        if old != new {
+            *byte &= !bitmask;
+            *byte |= (new as u8) << (bit % 8);
+
+            if new {
+                self.zeroes -= 1;
+            } else {
+                self.zeroes += 1;
+            }
+        }
+        old
     }
 
     /// Flip the bit at given position, returning its new value.
@@ -66,11 +82,18 @@ impl<T: AsMut<[u8]>> BitMap<T> {
     ///
     /// Panics if the index is out of bounds.
     pub fn flip_bit(&mut self, bit: u64) -> bool {
+        // TODO: Return old value instead of new one for consistency reasons
         self.check(bit);
         let byte = &mut self.buf.as_mut()[(bit / 8) as usize];
         let bitmask = 1 << (bit % 8);
         *byte ^= bitmask;
-        *byte == bitmask
+        let new = *byte == bitmask;
+        if new {
+            self.zeroes -= 1;
+        } else {
+            self.zeroes += 1;
+        }
+        new
     }
 
     /// Reset all bits to `0`
@@ -78,10 +101,20 @@ impl<T: AsMut<[u8]>> BitMap<T> {
         for byte in self.buf.as_mut() {
             *byte = 0;
         }
+        self.zeroes = self.num_bits;
     }
 }
 
 impl<T> BitMap<T> {
+    pub fn zeroes(&self) -> u64 {
+        self.zeroes
+    }
+
+    // TODO doc
+    pub fn ones(&self) -> u64 {
+        self.num_bits - self.zeroes
+    }
+
     /// Returns the number of bits
     pub fn num_bits(&self) -> u64 {
         self.num_bits
@@ -106,14 +139,12 @@ impl<T> BitMap<T> {
 impl<T: AsRef<[u8]>> BitMap<T> {
     /// Returns `true` if all bits are `1`.
     pub fn all(&self) -> bool {
-        // TODO: optimize
-        self.iter().all(|x| x)
+        self.zeroes == 0
     }
 
     /// Returns `true` if any bit is `1`.
     pub fn any(&self) -> bool {
-        // TODO: optimize
-        self.iter().any(|x| x)
+        self.zeroes != self.num_bits
     }
 
     /// Creates an iterator over all bits of this BitMap
@@ -214,7 +245,7 @@ mod tests {
     fn get_set() {
         let mut bitmap = BitMap::new([0u8]);
         for i in 0..8 {
-            bitmap.set(i, true);
+            assert!(!bitmap.set(i, true));
             assert!(bitmap.get(i));
         }
     }

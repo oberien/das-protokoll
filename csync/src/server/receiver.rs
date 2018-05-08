@@ -194,14 +194,22 @@ impl Stream for Receiver {
 
             let state = mem::replace(&mut self.state, State::Invalid);
             let mut state = if let State::WritingChunk(state) = state { state } else { unreachable!() };
-            state.bitmap.lock().unwrap().set(chunk.index, true);
+            {
+                let mut bitmap = state.bitmap.lock().unwrap();
+                bitmap.set(chunk.index, true);
 
-            // if last chunk
-            if state.bitmap.lock().unwrap().all() {
-                info!("Last chunk received. Closing Connection");
-                // TODO: remove bitmap file in sendbitmap path
-                // close connection
-                return Ok(Async::Ready(None));
+                if bitmap.zeroes().is_power_of_two() {
+                    debug!("Power of 2: {}", bitmap.zeroes());
+                    self.tx.unbounded_send(ChannelMessage::UploadStatus);
+                }
+
+                // if last chunk
+                if bitmap.all() {
+                    info!("Last chunk received. Closing Connection");
+                    // TODO: remove bitmap file in sendbitmap path
+                    // close connection
+                    return Ok(Async::Ready(None));
+                }
             }
             trace!("Switch to WaitForChunk");
             self.state = State::WaitForChunk(WaitForChunk {
