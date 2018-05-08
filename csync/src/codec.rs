@@ -10,18 +10,10 @@ pub const MTU: usize = 1460;
 #[derive(Debug)]
 pub struct Login<'a> {
     pub client_token: &'a [u8],
-}
-
-#[derive(Debug)]
-pub enum Command<'a> {
-    UploadRequest(UploadRequest<'a>),
-}
-
-#[derive(Debug)]
-pub struct UploadRequest<'a> {
     pub path: &'a str,
     pub length: u64,
 }
+
 
 pub struct Chunk {
     index_field_size: u64,
@@ -31,58 +23,38 @@ pub struct Chunk {
     pub buf: Vec<u8>,
 }
 
+fn read_bytes<'a>(cursor: &mut Cursor<&'a [u8]>) -> &'a [u8] {
+    let size = cursor.read_usize_varint().unwrap();
+    let pos = cursor.position() as usize;
+    &cursor.get_ref()[pos..][..size]
+}
+
 impl<'a> Login<'a> {
-    pub fn encode<W: Write>(&self, mut dst: W) -> usize {
+    pub fn encode<W: Write>(&self, mut dst: W) {
+        dst.write_usize_varint(self.client_token.len()).unwrap();
         dst.write_all(self.client_token).unwrap();
-        self.client_token.len()
+        dst.write_usize_varint(self.path.len()).unwrap();
+        dst.write_all(self.path.as_bytes()).unwrap();
+        dst.write_u64_varint(self.length).unwrap();
     }
 
     pub fn decode(src: &'a [u8]) -> Self {
+        // TODO: result instead of panicking
+        let mut cursor = Cursor::new(src);
+
+        let client_token = read_bytes(&mut cursor);
+        let path = str::from_utf8(read_bytes(&mut cursor)).unwrap();
+        let length = cursor.read_u64_varint().unwrap();
+
         Login {
-            client_token: src,
+            client_token,
+            path,
+            length,
         }
     }
 }
 
-impl<'a> Command<'a> {
-    pub fn encode<W: Write + WriteVarInt + WriteBytesExt>(&self, mut dst: W) -> usize {
-        match self {
-            &Command::UploadRequest(ref req) => {
-                dst.write_u8(0).unwrap();
-                req.encode(dst)
-            }
-        }
-    }
 
-    pub fn decode(src: &'a [u8]) -> Result<Self, Utf8Error> {
-        Ok(match src[0] {
-            0 => Command::UploadRequest(UploadRequest::decode(&src[1..])?),
-            c => panic!("Unknown Command {}", c)
-        })
-    }
-}
-
-impl<'a> UploadRequest<'a> {
-    fn encode<W: Write + WriteVarInt>(&self, mut dst: W) -> usize {
-        let length_len = varmint::len_u64_varint(self.length as u64);
-        let total_len = length_len + self.path.len();
-
-        dst.write_u64_varint(self.length as u64).unwrap();
-        dst.write_all(self.path.as_bytes()).unwrap();
-        total_len
-    }
-
-    fn decode(src: &'a [u8]) -> Result<Self, Utf8Error> {
-        let mut src = Cursor::new(src);
-        let length = src.read_u64_varint().unwrap();
-        let pos = src.position() as usize;
-        let path = &src.into_inner()[pos..];
-        Ok(UploadRequest {
-            path: str::from_utf8(path)?,
-            length: length,
-        })
-    }
-}
 
 impl Chunk {
     pub fn new(mut buf: Vec<u8>, index: u64, index_field_size: u64, data_size: usize) -> Chunk {
@@ -166,7 +138,7 @@ where
     let mut count = 0;
     let mut prev_val = true;
     let mut written = 0;
-    for (i, bit) in bitmap.iter().enumerate() {
+    for bit in bitmap.iter() {
         if bit == prev_val {
             count += 1;
             continue;
