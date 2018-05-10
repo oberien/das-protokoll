@@ -210,9 +210,7 @@ impl Stream for Receiver {
 
                 // if last chunk
                 if bitmap.all() {
-                    info!("Last chunk received. Closing Connection");
-                    // TODO: Proper FIN handling
-                    return Ok(Async::NotReady);
+                    info!("Last chunk received. Switch to WaitForChunk until fin-chunk is received.");
                 }
             }
             trace!("Switch to WaitForChunk");
