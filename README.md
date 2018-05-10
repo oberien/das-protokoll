@@ -143,6 +143,7 @@
 * Slow Start
     + How often should a status update be sent in the beginning?
 * Check usage of usize vs u64 everywhere to make sure we support u64 large files
+* client: don't reset cursor to 0 on every status update - instead, skip packets that are young enough
 
 ## Out of Scope (for now)
 
