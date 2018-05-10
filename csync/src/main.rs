@@ -17,6 +17,7 @@ extern crate take_mut;
 extern crate structopt;
 extern crate bitte_ein_bit;
 extern crate memmap;
+extern crate itertools;
 
 mod server;
 mod client;

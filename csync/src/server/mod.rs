@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::path::PathBuf;
 
 use futures::sync::mpsc;
-use futures::{Future, Stream, Sink};
+use futures::{Future, Stream, Sink, future};
 use tokio::net::UdpSocket;
 use tokio::reactor::Handle;
 use tokio;
@@ -23,7 +23,6 @@ mod sender;
 mod congestion;
 
 pub enum ChannelMessage {
-    Ack,
     UploadStart(Arc<Mutex<BitMap<MmapMut>>>, PathBuf),
     UploadStatus,
 }
@@ -68,7 +67,13 @@ fn handle_client(buf: [u8; MTU], size: usize, addr: SocketAddr) -> BoxedFuture {
     sock2.connect(&addr).expect("Can't connect to client");
 
     let (tx, rx) = mpsc::unbounded();
-    let login = Login::decode(&buf[..size]);
+    let login = match Login::decode(&buf[..size]) {
+        Ok(login) => login,
+        Err(e) => {
+            error!("Invalid Login Message: {}", e);
+            return Box::new(future::err(()));
+        }
+    };
     let stream = receiver::Receiver::new(sock, login, tx);
     let sink = sender::Sender::new(sock2);
 

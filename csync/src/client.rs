@@ -36,44 +36,34 @@ pub fn client() -> Result<(), Error>  {
     let last_chunk_size = chunk_info.last_chunk_size;
     let file = File::new_nb(file).unwrap().into_io(runtime.reactor()).unwrap();
 
-    Login { client_token: b"roflcopter" }.encode(&mut send_buf);
+    Login {
+        client_token: b"roflcopter",
+        command: Command::UploadRequest(UploadRequest { path: filename, length: filesize }),
+    }.encode(&mut send_buf);
 
     let client = socket.send_dgram(send_buf, server)
         .and_then(move |(socket, send_buf)| {
-            let syn_send_stamp = Instant::now();
-            socket.recv_dgram(recv_buf).map(move |x| (x, send_buf, syn_send_stamp))
+            socket.recv_dgram(recv_buf).map(move |x| (x, send_buf))
         })
-        .and_then(move |((socket, recv_buf, recv_len, server), mut send_buf, syn_send_stamp)| {
-            // TODO: process contents of this packet?
-            let ack_recv_stamp = Instant::now();
-            let rtt = ack_recv_stamp - syn_send_stamp;
-            // assert_eq!(recv_len, 0); // ???
-
-            send_buf.clear();
-            Command::UploadRequest(UploadRequest { path: filename, length: filesize }).encode(&mut send_buf);
-
-            socket.send_dgram(send_buf, &server).map(move |x| (x, recv_buf, server, rtt))
-        })
-        .and_then(move |((socket, send_buf), recv_buf, server, rtt)| {
-            println!("sta rtt={:?}", rtt);
+        .and_then(move |((socket, recv_buf, len, server), send_buf)| {
+            println!("sta");
 
             loop_fn(Client {
                 socket,
                 server,
                 send_buf,
                 recv_buf,
-                rtt,
                 file,
                 chunk_bitmap: BitVec::from_elem(chunk_count as usize, false),
                 chunk_cursor: 0,
                 last_chunk_size,
-            }, move |Client { socket, server, mut send_buf, recv_buf, rtt, file, chunk_bitmap, chunk_cursor, last_chunk_size }| {
+            }, move |Client { socket, server, mut send_buf, recv_buf, file, chunk_bitmap, chunk_cursor, last_chunk_size }| {
                 if chunk_cursor == chunk_bitmap.len() {
                     // TODO: only exit once server has confirmed everything
                     Box::new(ok(Loop::Break(()))) as Box<Future<Item=_, Error=_> + Send>
                 } else if chunk_bitmap[chunk_cursor] {
                     // server has confirmed, we can skip this
-                    Box::new(ok(Loop::Continue(Client { socket, server, send_buf, recv_buf, rtt, file, chunk_bitmap, chunk_cursor: chunk_cursor + 1, last_chunk_size }))) as Box<Future<Item=_, Error=_> + Send>
+                    Box::new(ok(Loop::Continue(Client { socket, server, send_buf, recv_buf, file, chunk_bitmap, chunk_cursor: chunk_cursor + 1, last_chunk_size }))) as Box<Future<Item=_, Error=_> + Send>
                 } else {
                     send_buf.clear();
 
@@ -97,7 +87,7 @@ pub fn client() -> Result<(), Error>  {
                                 let server = server;
                                 socket.send_dgram(send_buf, &server).map(move |x| (x, file, server))
                             })
-                            .map(move |((socket, send_buf), file, server)| Client { socket, server, send_buf, recv_buf, rtt, file, chunk_bitmap, chunk_cursor: chunk_cursor + 1, last_chunk_size }).map(Loop::Continue)) as Box<Future<Item=_, Error=_> + Send>
+                            .map(move |((socket, send_buf), file, server)| Client { socket, server, send_buf, recv_buf, file, chunk_bitmap, chunk_cursor: chunk_cursor + 1, last_chunk_size }).map(Loop::Continue)) as Box<Future<Item=_, Error=_> + Send>
                 }
             })
         });
@@ -114,7 +104,6 @@ struct Client {
     server: SocketAddr,
     send_buf: Vec<u8>,
     recv_buf: Vec<u8>,
-    rtt: Duration,
 
     file: PollEvented<File<StdFile>>, // we only ever read whole chunks out of this
     chunk_bitmap: BitVec,

@@ -10,6 +10,7 @@ pub const MTU: usize = 1460;
 #[derive(Debug)]
 pub struct Login<'a> {
     pub client_token: &'a [u8],
+    pub command: Command<'a>,
 }
 
 #[derive(Debug)]
@@ -31,55 +32,67 @@ pub struct Chunk {
     pub buf: Vec<u8>,
 }
 
+fn read_bytes<'a>(cursor: &mut Cursor<&'a [u8]>) -> &'a [u8] {
+    let size = cursor.read_usize_varint().unwrap();
+    let pos = cursor.position() as usize;
+    cursor.set_position(pos as u64 + size as u64);
+    &cursor.get_ref()[pos..][..size]
+}
+
 impl<'a> Login<'a> {
-    pub fn encode<W: Write>(&self, mut dst: W) -> usize {
+    pub fn encode<W: Write>(&self, mut dst: W) {
+        dst.write_usize_varint(self.client_token.len()).unwrap();
         dst.write_all(self.client_token).unwrap();
-        self.client_token.len()
+        self.command.encode(dst).unwrap();
     }
 
-    pub fn decode(src: &'a [u8]) -> Self {
-        Login {
-            client_token: src,
-        }
+    pub fn decode(src: &'a [u8]) -> Result<Login<'a>, io::Error> {
+        let mut cursor = Cursor::new(src);
+
+        let client_token = read_bytes(&mut cursor);
+        let command = Command::decode(&mut cursor)?;
+
+        Ok(Login {
+            client_token,
+            command,
+        })
     }
 }
 
 impl<'a> Command<'a> {
-    pub fn encode<W: Write + WriteVarInt + WriteBytesExt>(&self, mut dst: W) -> usize {
+    pub fn encode<W: Write + WriteVarInt + WriteBytesExt>(&self, mut dst: W) -> Result<usize, io::Error> {
         match self {
             &Command::UploadRequest(ref req) => {
                 dst.write_u8(0).unwrap();
-                req.encode(dst)
+                Ok(req.encode(dst)? + 1)
             }
         }
     }
 
-    pub fn decode(src: &'a [u8]) -> Result<Self, Utf8Error> {
-        Ok(match src[0] {
-            0 => Command::UploadRequest(UploadRequest::decode(&src[1..])?),
+    pub fn decode(src: &mut Cursor<&'a [u8]>) -> Result<Self, io::Error> {
+        Ok(match src.read_u8()? {
+            0 => Command::UploadRequest(UploadRequest::decode(src)?),
             c => panic!("Unknown Command {}", c)
         })
     }
 }
 
 impl<'a> UploadRequest<'a> {
-    fn encode<W: Write + WriteVarInt>(&self, mut dst: W) -> usize {
-        let length_len = varmint::len_u64_varint(self.length as u64);
-        let total_len = length_len + self.path.len();
-
-        dst.write_u64_varint(self.length as u64).unwrap();
-        dst.write_all(self.path.as_bytes()).unwrap();
-        total_len
+    pub fn encode<W: Write>(&self, mut dst: W) -> Result<usize, io::Error> {
+        dst.write_usize_varint(self.path.len())?;
+        dst.write_all(self.path.as_bytes())?;
+        dst.write_u64_varint(self.length)?;
+        Ok(varmint::len_usize_varint(self.path.len()) + self.path.as_bytes().len()
+            + varmint::len_u64_varint(self.length))
     }
 
-    fn decode(src: &'a [u8]) -> Result<Self, Utf8Error> {
-        let mut src = Cursor::new(src);
-        let length = src.read_u64_varint().unwrap();
-        let pos = src.position() as usize;
-        let path = &src.into_inner()[pos..];
+    pub fn decode(src: &mut Cursor<&'a [u8]>) -> Result<UploadRequest<'a>, io::Error> {
+        let path = str::from_utf8(read_bytes(src))
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let length = src.read_u64_varint()?;
         Ok(UploadRequest {
-            path: str::from_utf8(path)?,
-            length: length,
+            path,
+            length,
         })
     }
 }
@@ -166,7 +179,7 @@ where
     let mut count = 0;
     let mut prev_val = true;
     let mut written = 0;
-    for (i, bit) in bitmap.iter().enumerate() {
+    for bit in bitmap.iter() {
         if bit == prev_val {
             count += 1;
             continue;

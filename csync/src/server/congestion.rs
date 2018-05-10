@@ -45,9 +45,23 @@ impl CongestionInfo {
     pub fn stop_rtt(&mut self) {
         // TODO: moving average
         match self.rtt_start.take() {
-            Some(rtt_start) => self.rtt = rtt_start.elapsed(),
+            Some(rtt_start) => {
+                self.rtt = rtt_start.elapsed();
+                self.rtts.push_back(self.rtt);
+            },
             None => panic!("Called `stop_rtt` without a previous `start_rtt`")
         }
+    }
+
+    pub fn is_rtt_running(&self) -> bool {
+        self.rtt_start.is_some()
+    }
+
+    pub fn rtt(&self) -> Duration {
+        if self.rtts.len() == 0 {
+            panic!("Called rtt without having performed an rtt measurement");
+        }
+        self.rtt
     }
 
     pub fn ipt_packet(&mut self) {
