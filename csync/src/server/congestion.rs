@@ -50,6 +50,17 @@ impl CongestionInfo {
         }
     }
 
+    pub fn is_rtt_running(&self) -> bool {
+        self.rtt_start.is_some()
+    }
+
+    pub fn rtt(&self) -> Duration {
+        if self.rtts.len() == 0 {
+            panic!("Called rtt without having performed an rtt measurement");
+        }
+        self.rtt
+    }
+
     pub fn ipt_packet(&mut self) {
         // IPT calculation
         if let None = self.last_ipt {

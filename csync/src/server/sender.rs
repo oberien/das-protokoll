@@ -50,10 +50,6 @@ impl Sink for Sender {
         }
 
         match item {
-            ChannelMessage::Ack => {
-                self.vec.truncate(0);
-                self.state = State::Sending;
-            }
             ChannelMessage::UploadStart(bitmap, bitmap_path) => {
                 if self.bitmap.is_some() {
                     panic!("Bitmap is already some");

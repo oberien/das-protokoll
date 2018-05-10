@@ -24,14 +24,12 @@ pub struct Receiver {
     state: State,
     socket: UdpSocket,
     tx: UnboundedSender<ChannelMessage>,
-    rtt: Duration,
     folder: PathBuf,
     congestion: CongestionInfo,
 }
 
 pub enum State {
     Invalid,
-    WaitForAckAndCommand,
     WaitForChunk(WaitForChunk),
     WritingChunk(WritingChunk),
 }
@@ -53,9 +51,6 @@ pub struct WritingChunk {
 
 impl Receiver {
     pub fn new(socket: UdpSocket, login: Login, tx: UnboundedSender<ChannelMessage>) -> Receiver {
-        tx.unbounded_send(ChannelMessage::Ack).unwrap();
-        let mut congestion = CongestionInfo::new();
-        congestion.start_rtt();
         debug!("Login");
         trace!("Client Token: {:?}", login);
         let sha = digest::digest(&digest::SHA256, login.client_token);
@@ -64,20 +59,20 @@ impl Receiver {
         let mut path = PathBuf::from("./files/");
         path.push(hex);
         debug!("Folder: {}", path.display());
-        Receiver {
-            state: State::WaitForAckAndCommand,
+        let mut receiver = Receiver {
+            state: State::Invalid,
             socket,
             tx,
-            rtt: Duration::from_secs(0),
             folder: path,
-            congestion,
-        }
+            congestion: CongestionInfo::new(),
+        };
+        receiver.command(login.command);
+        receiver.tx.unbounded_send(ChannelMessage::UploadStatus).unwrap();
+        receiver.congestion.start_rtt();
+        receiver
     }
 
-    pub fn ack(&mut self, command: Command) {
-        self.congestion.stop_rtt();
-        debug!("Ack from Client, RTT {}ms", self.rtt.as_secs() * 1000 + self.rtt.subsec_nanos() as u64 / 1_000_000);
-
+    pub fn command(&mut self, command: Command) {
         match command {
             Command::UploadRequest(req) => self.upload_request(req),
         }
@@ -147,6 +142,11 @@ impl Receiver {
 
     pub fn chunk(&mut self, chunk: Chunk, chunk_info: ChunkInfo,
                  mut file: PollEvented2<File<StdFile>>, bitmap: Arc<Mutex<BitMap<MmapMut>>>) {
+        if self.congestion.is_rtt_running() {
+            self.congestion.stop_rtt();
+            let rtt = self.congestion.rtt();
+            debug!("Ack from Client, RTT {}ms", rtt.as_secs() * 1000 + rtt.subsec_nanos() as u64 / 1_000_000);
+        }
         self.congestion.ipt_packet();
         if bitmap.lock().unwrap().get(chunk.index) {
             info!("Chunk {} already received, skipping", chunk.index);
@@ -220,13 +220,6 @@ impl Stream for Receiver {
 
         match self.state {
             State::Invalid => unreachable!(),
-            State::WaitForAckAndCommand => {
-                let mut buf = [0u8; MTU];
-                let size = try_ready!(self.socket.poll_recv(&mut buf));
-                let command = Command::decode(&mut buf[..size])
-                    .map_err(|e| IoError::new(ErrorKind::InvalidData, e))?;
-                self.ack(command)
-            },
             State::WaitForChunk(_) => {
                 let size = if let State::WaitForChunk(WaitForChunk { ref mut buf, .. }) = self.state {
                     buf.resize(MTU, 0);
