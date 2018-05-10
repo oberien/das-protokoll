@@ -142,6 +142,7 @@ impl AsMut<[u8]> for Chunk {
     }
 }
 
+#[derive(Debug)]
 pub struct ChunkInfo {
     pub index_field_size: u64,
     pub chunk_size: u64,
@@ -238,7 +239,6 @@ impl MissingRanges {
         self.missing.extend(RunlengthIter::new(update).scan(0, |a, x| { *a += x; Some(*a) })
                             .tuples().map(|(from, to)| MissingRange(from, to)));
         self.cursor = 0;
-        println!("updated status {:?}", self);
         self.missing.is_empty()
     }
 

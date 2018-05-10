@@ -226,7 +226,12 @@ impl Stream for Receiver {
 
         match self.state {
             State::Invalid => unreachable!(),
-            State::WaitForAck(_) => self.ack(),
+            State::WaitForAck(_) => {
+                if let State::WaitForAck(WaitForChunk { ref mut buf, .. }) = self.state {
+                    try_ready!(self.socket.poll_recv(buf));
+                }
+                self.ack()
+            },
             State::WaitForChunk(_) => {
                 if let State::WaitForChunk(WaitForChunk { ref mut buf, .. }) = self.state {
                     buf.resize(MTU, 0);
@@ -238,6 +243,7 @@ impl Stream for Receiver {
                 let chunk = Chunk::decode(state.buf, state.chunk_info.index_field_size);
                 match chunk.index.wrapping_sub(state.chunk_info.num_chunks) {
                     0 => {
+                        debug!("Moving to shutdown");
                         self.congestion.shutdown();
                         self.state = State::Shutdown(chunk.into_vec());
                     },
@@ -249,6 +255,7 @@ impl Stream for Receiver {
                 buf.resize(MTU, 0);
                 try_ready!(self.socket.poll_recv(buf));
                 // ignore everything, we're shutting down
+                debug!("Got message in Shutdown");
             }
         }
         if let State::Invalid = self.state {
