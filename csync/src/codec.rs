@@ -35,6 +35,7 @@ pub struct Chunk {
 fn read_bytes<'a>(cursor: &mut Cursor<&'a [u8]>) -> &'a [u8] {
     let size = cursor.read_usize_varint().unwrap();
     let pos = cursor.position() as usize;
+    cursor.set_position(pos as u64 + size as u64);
     &cursor.get_ref()[pos..][..size]
 }
 
@@ -42,7 +43,7 @@ impl<'a> Login<'a> {
     pub fn encode<W: Write>(&self, mut dst: W) {
         dst.write_usize_varint(self.client_token.len()).unwrap();
         dst.write_all(self.client_token).unwrap();
-
+        self.command.encode(dst).unwrap();
     }
 
     pub fn decode(src: &'a [u8]) -> Result<Login<'a>, io::Error> {
@@ -78,6 +79,7 @@ impl<'a> Command<'a> {
 
 impl<'a> UploadRequest<'a> {
     pub fn encode<W: Write>(&self, mut dst: W) -> Result<usize, io::Error> {
+        dst.write_usize_varint(self.path.len())?;
         dst.write_all(self.path.as_bytes())?;
         dst.write_u64_varint(self.length)?;
         Ok(varmint::len_usize_varint(self.path.len()) + self.path.as_bytes().len()
