@@ -8,7 +8,6 @@ extern crate net2;
 extern crate tokio;
 extern crate varmint;
 extern crate byteorder;
-extern crate bit_vec;
 extern crate tokio_file_unix;
 extern crate ring;
 extern crate hex;

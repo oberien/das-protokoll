@@ -1,8 +1,9 @@
 use std::io::{self, Cursor, Write, ErrorKind};
-
-use std::str;
+use std::cmp;
+use std::str::{self, Utf8Error};
 use varmint::{self, ReadVarInt, WriteVarInt};
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
+use itertools::Itertools;
 use bitte_ein_bit::BitMap;
 
 pub const MTU: usize = 1460;
@@ -220,6 +221,27 @@ impl<T: AsRef<[u8]>> Iterator for RunlengthIter<T> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct MissingRange(pub u64, pub u64);
+
+#[derive(Debug, Default)]
+pub struct MissingRanges(Vec<MissingRange>);
+
+impl MissingRanges {
+    pub fn parse_status_update(&mut self, update: &[u8]) {
+        self.0.clear();
+        self.0.extend(RunlengthIter::new(update).scan(0, |a, x| { *a += x; Some(*a) })
+                      .tuples().map(|(from, to)| MissingRange(from, to)));
+    }
+
+    pub fn advance_cursor(&self, cursor: u64) -> Option<u64> {
+        let cursor = cursor + 1;
+        let &MissingRange(from, _) = self.0.iter().find(|&&MissingRange(from, to)| to > cursor)?;
+        Some(cmp::max(cursor, from))
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -258,5 +280,26 @@ mod test {
             let decoded: Vec<_> = RunlengthIter::new(message).collect();
             assert_eq!(decoded, numbers);
         }
+    }
+
+    #[test]
+    fn test_missing_ranges() {
+        let mut mr = MissingRanges::default();
+        mr.parse_status_update(&[2, 2, 3, 4]);
+        // index:  0123456789a
+        // bitmap: 11001110000
+        // missing:  --   ----
+        //          2,4   7,11
+        assert_eq!(mr.0.as_slice(), [MissingRange(2, 4), MissingRange(7, 11)]);
+        assert_eq!(mr.advance_cursor(0), Some(2));
+        assert_eq!(mr.advance_cursor(1), Some(2));
+        assert_eq!(mr.advance_cursor(2), Some(3));
+        assert_eq!(mr.advance_cursor(3), Some(7));
+        assert_eq!(mr.advance_cursor(6), Some(7));
+        assert_eq!(mr.advance_cursor(7), Some(8));
+        assert_eq!(mr.advance_cursor(8), Some(9));
+        assert_eq!(mr.advance_cursor(9), Some(10));
+        assert_eq!(mr.advance_cursor(10), None);
+        assert_eq!(mr.advance_cursor(11), None);
     }
 }
