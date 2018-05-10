@@ -10,10 +10,19 @@ pub const MTU: usize = 1460;
 #[derive(Debug)]
 pub struct Login<'a> {
     pub client_token: &'a [u8],
+    pub command: Command<'a>,
+}
+
+#[derive(Debug)]
+pub enum Command<'a> {
+    UploadRequest(UploadRequest<'a>),
+}
+
+#[derive(Debug)]
+pub struct UploadRequest<'a> {
     pub path: &'a str,
     pub length: u64,
 }
-
 
 pub struct Chunk {
     index_field_size: u64,
@@ -33,28 +42,58 @@ impl<'a> Login<'a> {
     pub fn encode<W: Write>(&self, mut dst: W) {
         dst.write_usize_varint(self.client_token.len()).unwrap();
         dst.write_all(self.client_token).unwrap();
-        dst.write_usize_varint(self.path.len()).unwrap();
-        dst.write_all(self.path.as_bytes()).unwrap();
-        dst.write_u64_varint(self.length).unwrap();
+
     }
 
-    pub fn decode(src: &'a [u8]) -> Self {
-        // TODO: result instead of panicking
+    pub fn decode(src: &'a [u8]) -> Result<Login<'a>, io::Error> {
         let mut cursor = Cursor::new(src);
 
         let client_token = read_bytes(&mut cursor);
-        let path = str::from_utf8(read_bytes(&mut cursor)).unwrap();
-        let length = cursor.read_u64_varint().unwrap();
+        let command = Command::decode(&mut cursor)?;
 
-        Login {
+        Ok(Login {
             client_token,
-            path,
-            length,
-        }
+            command,
+        })
     }
 }
 
+impl<'a> Command<'a> {
+    pub fn encode<W: Write + WriteVarInt + WriteBytesExt>(&self, mut dst: W) -> Result<usize, io::Error> {
+        match self {
+            &Command::UploadRequest(ref req) => {
+                dst.write_u8(0).unwrap();
+                Ok(req.encode(dst)? + 1)
+            }
+        }
+    }
 
+    pub fn decode(src: &mut Cursor<&'a [u8]>) -> Result<Self, io::Error> {
+        Ok(match src.read_u8()? {
+            0 => Command::UploadRequest(UploadRequest::decode(src)?),
+            c => panic!("Unknown Command {}", c)
+        })
+    }
+}
+
+impl<'a> UploadRequest<'a> {
+    pub fn encode<W: Write>(&self, mut dst: W) -> Result<usize, io::Error> {
+        dst.write_all(self.path.as_bytes())?;
+        dst.write_u64_varint(self.length)?;
+        Ok(varmint::len_usize_varint(self.path.len()) + self.path.as_bytes().len()
+            + varmint::len_u64_varint(self.length))
+    }
+
+    pub fn decode(src: &mut Cursor<&'a [u8]>) -> Result<UploadRequest<'a>, io::Error> {
+        let path = str::from_utf8(read_bytes(src))
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let length = src.read_u64_varint()?;
+        Ok(UploadRequest {
+            path,
+            length,
+        })
+    }
+}
 
 impl Chunk {
     pub fn new(mut buf: Vec<u8>, index: u64, index_field_size: u64, data_size: usize) -> Chunk {
