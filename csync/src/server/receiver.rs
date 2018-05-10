@@ -32,6 +32,7 @@ pub enum State {
     Invalid,
     WaitForChunk(WaitForChunk),
     WritingChunk(WritingChunk),
+    Shutdown(Vec<u8>),
 }
 
 pub struct WaitForChunk {
@@ -154,7 +155,7 @@ impl Receiver {
                 file,
                 bitmap,
                 buf: chunk.into_vec(),
-                chunk_info: chunk_info,
+                chunk_info,
             });
             return;
         }
@@ -230,9 +231,20 @@ impl Stream for Receiver {
                 let state = mem::replace(&mut self.state, State::Invalid);
                 let state = if let State::WaitForChunk(state) = state { state } else { unreachable!() };
                 let chunk = Chunk::decode(state.buf, size, state.chunk_info.index_field_size);
-                self.chunk(chunk, state.chunk_info, state.file, state.bitmap);
+                match chunk.index.wrapping_sub(state.chunk_info.num_chunks) {
+                    0 => {
+                        self.congestion.shutdown();
+                        self.state = State::Shutdown(chunk.into_vec());
+                    },
+                    _ => self.chunk(chunk, state.chunk_info, state.file, state.bitmap)
+                }
             }
             State::WritingChunk(_) => unreachable!(),
+            State::Shutdown(mut buf) => {
+                buf.resize(MTU, 0);
+                try_ready!(self.socket.poll_recv(buf));
+                // ignore everything, we're shutting down
+            }
         }
         if let State::Invalid = self.state {
             panic!("Invalid Receiver-State");

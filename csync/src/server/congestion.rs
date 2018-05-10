@@ -17,6 +17,7 @@ pub struct CongestionInfo {
     last_notify: Instant,
     packets_since_last_notify: u32,
     delay: Option<Delay>,
+    done: bool,
 }
 
 impl CongestionInfo {
@@ -31,6 +32,7 @@ impl CongestionInfo {
             last_notify: Instant::now(),
             packets_since_last_notify: 0,
             delay: None,
+            done: false,
         }
     }
 
@@ -105,6 +107,10 @@ impl CongestionInfo {
             self.delay = Some(Delay::new(self.last_notify + time_left));
         }
     }
+
+    pub fn shutdown(&mut self) {
+        self.done = true;
+    }
 }
 
 impl Stream for CongestionInfo {
@@ -112,6 +118,9 @@ impl Stream for CongestionInfo {
     type Error = <Delay as Future>::Error;
 
     fn poll(&mut self) -> Result<Async<Option<Self::Item>>, Self::Error> {
+        if self.done {
+            return Ok(Async::NotReady);
+        }
         if self.delay.is_none() {
             return Ok(Async::NotReady);
         }
