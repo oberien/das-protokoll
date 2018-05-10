@@ -45,17 +45,18 @@ pub fn client() -> Result<(), Error>  {
      */
     let missing = &RefCell::new(MissingRanges::default());
 
+    let filename = "/usr/share/dict/cracklib-small";
+    let file = StdFile::open(filename).unwrap();
+    let filesize = file.metadata().unwrap().len();
+
+    let chunk_info = &index_field_size(filesize);
+
     let client = future::lazy(move || {
         let reactor: &Handle = &Handle::current(); // new tokio is stupid
 
         let socket = UdpSocket::from_std(socket, reactor).unwrap();
         let socket2 = UdpSocket::from_std(socket2, reactor).unwrap();
 
-        let filename = "/usr/share/dict/cracklib-small";
-        let file = StdFile::open(filename).unwrap();
-        let filesize = file.metadata().unwrap().len();
-
-        let chunk_info = index_field_size(filesize);
         let chunk_size = chunk_info.chunk_size;
         let chunk_count = chunk_info.num_chunks;
         let last_chunk_size = chunk_info.last_chunk_size;
@@ -86,6 +87,7 @@ pub fn client() -> Result<(), Error>  {
             .and_then(move |((socket, send_buf), recv_buf, server, rtt, /*missing_chunks, */missing)| {
                 println!("sta rtt={:?}", rtt);
 
+                /*
                 let reader = loop_fn((socket2, recv_buf.clone(), missing), move |(socket2, recv_buf, missing)| socket2.recv_dgram(recv_buf).map(move |(socket2, recv_buf, recv_len, server)| {
                     if false { Loop::Break(()) }
                     else {
@@ -140,6 +142,43 @@ pub fn client() -> Result<(), Error>  {
                     Ok(Either::B(_)) => unreachable!(),
                     _ => unimplemented!(),
                 })
+                 */
+
+                loop_fn((do_chunk(chunk_info, missing, file, socket, send_buf, server), socket2.recv_dgram(recv_buf), rtt, last_chunk_size), move |(chunk_send, update_recv, rtt, lcs)| {
+                    match chunk_send {
+                        Ok(chunk_send) => Box::new(chunk_send.select2(update_recv).then(move |e| Ok(match e {
+                            Ok(Either::A(((file, socket, send_buf), update_recv))) => {
+                                // send done, go send another
+                                Loop::Continue((do_chunk(chunk_info, missing, file, socket, send_buf, server), update_recv, rtt, lcs))
+                            }
+                            Ok(Either::B(((socket2, recv_buf, recv_len, server), chunk_send))) => {
+                                // got a status update!
+                                if missing.borrow_mut().parse_status_update(&recv_buf[..recv_len]) {
+                                    Loop::Break((socket2, recv_buf, server))
+                                } else {
+                                    // read the next one
+                                    Loop::Continue((Ok(chunk_send), socket2.recv_dgram(recv_buf), rtt, lcs))
+                                }
+                            }
+                            Err(Either::A((e, _))) | Err(Either::B((e, _))) => return Err(e), // just forward errors
+                        }))) as Box<Future<Item=_, Error=_>>,
+                        Err((file, socket, send_buf)) => {
+                            Box::new(update_recv.map(move |(socket2, recv_buf, recv_len, server)| {
+                                // got a status update while sleeping
+                                if missing.borrow_mut().parse_status_update(&recv_buf[..recv_len]) {
+                                    Loop::Break((socket, send_buf, server))
+                                } else {
+                                    // start sending again and read the next one
+                                    Loop::Continue((do_chunk(chunk_info, missing, file, socket, send_buf, server), socket2.recv_dgram(recv_buf), rtt, lcs))
+                                }
+                            })) as Box<Future<Item=_, Error=_>>
+                        }
+                    }
+                }).and_then(move |(socket, send_buf, server): (UdpSocket, _, SocketAddr)| {
+                    let chunk = Chunk::new(send_buf, chunk_info.num_chunks, chunk_info.index_field_size, 0);
+
+                    socket.send_dgram(chunk.into_vec(), &server)
+                })
             });
         client
     });
@@ -161,6 +200,42 @@ struct Client<'a> {
     chunk_cursor: u64,
     last_chunk_size: u64,
 }
+
+
+fn do_chunk(chunk_info: &ChunkInfo,
+            missing_chunks: &RefCell<MissingRanges>,
+            mut file: PollEvented<File<StdFile>>,
+            socket: UdpSocket,
+            send_buf: Vec<u8>,
+            server: SocketAddr)
+            -> Result<Box<Future<Item = (PollEvented<File<StdFile>>, UdpSocket, Vec<u8>), Error = Error>>, (PollEvented<File<StdFile>>, UdpSocket, Vec<u8>)> {
+    let chunk_cursor = match missing_chunks.borrow_mut().next_chunk() {
+        Some(x) => x,
+        None => return Err((file, socket, send_buf)),
+    };
+
+    let payload = if chunk_cursor == chunk_info.num_chunks - 1 {
+        chunk_info.last_chunk_size
+    } else {
+        chunk_info.chunk_size
+    };
+
+    let chunk = Chunk::new(send_buf, chunk_cursor, chunk_info.index_field_size, payload as usize);
+    file.get_mut().seek(SeekFrom::Start(chunk_cursor as u64 * chunk_info.chunk_size)).unwrap();
+
+    Ok(Box::new(
+        io::read_exact(file, chunk)
+            .and_then(move |(file, chunk)| {
+                let send_buf = chunk.into_vec();
+                let server = server;
+                socket.send_dgram(send_buf, &server).map(move |(socket, send_buf)| {
+                    (file, socket, send_buf)
+                })
+            })
+    ))
+}
+
+
 
 // draft v1: pump as much as possible
 

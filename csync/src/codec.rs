@@ -151,6 +151,8 @@ pub struct ChunkInfo {
 
 /// Calculates and returns the ChunkInfo for the given file length.
 pub fn index_field_size(length: u64) -> ChunkInfo {
+    let length = length + 1; // additional space for extension messages
+
     let mut index_field_size = 1;
     let mut chunk_size;
     let mut num_chunks;
@@ -225,19 +227,34 @@ impl<T: AsRef<[u8]>> Iterator for RunlengthIter<T> {
 struct MissingRange(pub u64, pub u64);
 
 #[derive(Debug, Default)]
-pub struct MissingRanges(Vec<MissingRange>);
+pub struct MissingRanges {
+    missing: Vec<MissingRange>,
+    cursor: u64,
+}
 
 impl MissingRanges {
-    pub fn parse_status_update(&mut self, update: &[u8]) {
-        self.0.clear();
-        self.0.extend(RunlengthIter::new(update).scan(0, |a, x| { *a += x; Some(*a) })
-                      .tuples().map(|(from, to)| MissingRange(from, to)));
+    pub fn parse_status_update(&mut self, update: &[u8]) -> bool {
+        self.missing.clear();
+        self.missing.extend(RunlengthIter::new(update).scan(0, |a, x| { *a += x; Some(*a) })
+                            .tuples().map(|(from, to)| MissingRange(from, to)));
+        self.cursor = 0;
+        println!("updated status {:?}", self);
+        self.missing.is_empty()
     }
 
     pub fn advance_cursor(&self, cursor: u64) -> Option<u64> {
         let cursor = cursor + 1;
-        let &MissingRange(from, _) = self.0.iter().find(|&&MissingRange(from, to)| to > cursor)?;
+        let &MissingRange(from, _) = self.missing.iter().find(|&&MissingRange(from, to)| to > cursor)?;
         Some(cmp::max(cursor, from))
+    }
+
+    pub fn next_chunk(&mut self) -> Option<u64> {
+        let &MissingRange(from, _) = self.missing.iter().find(|&&MissingRange(from, to)| to > self.cursor)?;
+        self.cursor = cmp::max(self.cursor, from);
+        let ret = self.cursor;
+        println!("advancing cursor {:?}", self);
+        self.cursor += 1;
+        Some(ret)
     }
 }
 
