@@ -1,6 +1,5 @@
-use std::io::{Seek, SeekFrom, Error as IoError, ErrorKind};
+use std::io::{Seek, SeekFrom, Error as IoError};
 use std::mem;
-use std::time::Duration;
 use std::fs::{self, File as StdFile, OpenOptions};
 use std::path::{PathBuf, Path};
 use std::sync::{Arc, Mutex};
@@ -30,6 +29,7 @@ pub struct Receiver {
 
 pub enum State {
     Invalid,
+    WaitForAck(WaitForChunk),
     WaitForChunk(WaitForChunk),
     WritingChunk(WritingChunk),
     Shutdown(Vec<u8>),
@@ -133,7 +133,7 @@ impl Receiver {
         let bitmap = Arc::new(Mutex::new(bitmap));
         self.tx.unbounded_send(ChannelMessage::UploadStart(Arc::clone(&bitmap), bitmap_path)).unwrap();
 
-        self.state = State::WaitForChunk(WaitForChunk {
+        self.state = State::WaitForAck(WaitForChunk {
             file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
             bitmap,
             buf: Vec::with_capacity(MTU),
@@ -141,13 +141,18 @@ impl Receiver {
         });
     }
 
+    pub fn ack(&mut self) {
+        self.congestion.stop_rtt();
+        let rtt = self.congestion.rtt();
+        debug!("Ack from Client, RTT {}ms", rtt.as_secs() * 1000 + rtt.subsec_nanos() as u64 / 1_000_000);
+        let state = mem::replace(&mut self.state, State::Invalid);
+        let state = if let State::WaitForAck(state) = state { state } else { unreachable!() };
+        self.state = State::WaitForChunk(state);
+
+    }
+
     pub fn chunk(&mut self, chunk: Chunk, chunk_info: ChunkInfo,
                  mut file: PollEvented2<File<StdFile>>, bitmap: Arc<Mutex<BitMap<MmapMut>>>) {
-        if self.congestion.is_rtt_running() {
-            self.congestion.stop_rtt();
-            let rtt = self.congestion.rtt();
-            debug!("Ack from Client, RTT {}ms", rtt.as_secs() * 1000 + rtt.subsec_nanos() as u64 / 1_000_000);
-        }
         self.congestion.ipt_packet();
         if bitmap.lock().unwrap().get(chunk.index) {
             info!("Chunk {} already received, skipping", chunk.index);
@@ -221,16 +226,16 @@ impl Stream for Receiver {
 
         match self.state {
             State::Invalid => unreachable!(),
+            State::WaitForAck(_) => self.ack(),
             State::WaitForChunk(_) => {
-                let size = if let State::WaitForChunk(WaitForChunk { ref mut buf, .. }) = self.state {
+                if let State::WaitForChunk(WaitForChunk { ref mut buf, .. }) = self.state {
                     buf.resize(MTU, 0);
                     let size = try_ready!(self.socket.poll_recv(buf));
                     buf.truncate(size);
-                    size
                 } else { unreachable!() };
                 let state = mem::replace(&mut self.state, State::Invalid);
                 let state = if let State::WaitForChunk(state) = state { state } else { unreachable!() };
-                let chunk = Chunk::decode(state.buf, size, state.chunk_info.index_field_size);
+                let chunk = Chunk::decode(state.buf, state.chunk_info.index_field_size);
                 match chunk.index.wrapping_sub(state.chunk_info.num_chunks) {
                     0 => {
                         self.congestion.shutdown();
@@ -240,7 +245,7 @@ impl Stream for Receiver {
                 }
             }
             State::WritingChunk(_) => unreachable!(),
-            State::Shutdown(mut buf) => {
+            State::Shutdown(ref mut buf) => {
                 buf.resize(MTU, 0);
                 try_ready!(self.socket.poll_recv(buf));
                 // ignore everything, we're shutting down

@@ -1,6 +1,6 @@
 use std::io::{self, Cursor, Write, ErrorKind};
 
-use std::str::{self, Utf8Error};
+use std::str;
 use varmint::{self, ReadVarInt, WriteVarInt};
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use bitte_ein_bit::BitMap;
@@ -112,7 +112,7 @@ impl Chunk {
         }
     }
 
-    pub fn decode(src: Vec<u8>, size: usize, index_field_size: u64) -> Self {
+    pub fn decode(src: Vec<u8>, index_field_size: u64) -> Self {
         let mut buf = [0u8; 8];
         (&mut buf[..index_field_size as usize]).copy_from_slice(&src[..index_field_size as usize]);
         let index = (&buf[..]).read_u64::<LE>().unwrap();
