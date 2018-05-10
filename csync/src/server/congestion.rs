@@ -45,7 +45,10 @@ impl CongestionInfo {
     pub fn stop_rtt(&mut self) {
         // TODO: moving average
         match self.rtt_start.take() {
-            Some(rtt_start) => self.rtt = rtt_start.elapsed(),
+            Some(rtt_start) => {
+                self.rtt = rtt_start.elapsed();
+                self.rtts.push_back(self.rtt);
+            },
             None => panic!("Called `stop_rtt` without a previous `start_rtt`")
         }
     }
