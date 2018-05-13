@@ -1,8 +1,9 @@
 use std::io::{Seek, SeekFrom};
 use std::time::{Instant, Duration};
-use std::net::{SocketAddr, UdpSocket as StdUdp};
-use std::fs::File as StdFile;
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket as StdUdp};
+use std::fs::{self, File as StdFile};
 use std::cell::RefCell;
+use std::path::Path;
 
 use futures::future::{self, ok, loop_fn, Loop, Either};
 use futures::Future;
@@ -18,11 +19,22 @@ use byteorder::{WriteBytesExt, LE};
 
 use codec::*;
 
+pub fn client(opt: super::Opt) -> Result<(), Error> {
+    for file in fs::read_dir(opt.files.as_ref().unwrap()).unwrap() {
+        let file = file.unwrap();
+        if file.file_type().unwrap().is_file() {
+            let file = file.file_name();
+            println!("uploading {:?}", file);
+            client_once(file.to_str().unwrap(), &opt)?;
+        }
+    }
 
-pub fn client() -> Result<(), Error>  {
+    Ok(())
+}
 
+pub fn client_once(filename: &str, opt: &super::Opt) -> Result<(), Error>  {
     let socket = StdUdp::bind("127.0.0.1:0")?;
-    let server = &"127.0.0.1:21088".parse().unwrap();
+    let server = &(opt.host.as_str(), opt.port).to_socket_addrs().unwrap().next().unwrap();
     socket.connect(server)?;
 
     let socket2 = socket.try_clone().unwrap();
@@ -45,8 +57,7 @@ pub fn client() -> Result<(), Error>  {
      */
     let missing = &RefCell::new(MissingRanges::default());
 
-    let filename = "/usr/share/dict/cracklib-small";
-    let file = StdFile::open(filename).unwrap();
+    let file = StdFile::open(Path::new(opt.files.as_ref().unwrap()).join(filename)).unwrap();
     let filesize = file.metadata().unwrap().len();
 
     let chunk_info = &index_field_size(filesize);

@@ -17,6 +17,8 @@ extern crate structopt;
 extern crate bitte_ein_bit;
 extern crate memmap;
 extern crate itertools;
+extern crate walkdir;
+
 
 mod server;
 mod client;
@@ -27,7 +29,7 @@ use structopt::StructOpt;
 
 #[derive(StructOpt)]
 #[structopt(name = "csync", about = "Cloud Sync")]
-struct Opt {
+pub struct Opt {
     /// Server Mode
     #[structopt(short = "s", long = "server")]
     server: bool,
@@ -37,12 +39,9 @@ struct Opt {
     /// Remote host
     #[structopt(short = "h", long = "host", default_value = "localhost")]
     host: String,
-
-/*
     /// Directory to upload files from
     #[structopt(short = "f", long = "files")]
-    files: Option<PathBuf>,
-*/
+    files: Option<String>,
 }
 
 fn main() {
@@ -53,6 +52,6 @@ fn main() {
     if opt.server {
         server::run();
     } else {
-        client::client().unwrap();
+        client::client(opt).unwrap();
     }
 }

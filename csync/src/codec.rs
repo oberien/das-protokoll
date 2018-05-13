@@ -170,7 +170,7 @@ pub fn index_field_size(data_length: u64) -> ChunkInfo {
     ChunkInfo {
         index_field_size,
         chunk_size,
-        num_chunks: data_length / chunk_size,
+        num_chunks: (data_length + chunk_size - 1) / chunk_size,
         last_chunk_size: data_length % chunk_size,
     }
 }
