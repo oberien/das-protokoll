@@ -15,7 +15,6 @@ pub struct Sender {
     socket: UdpSocket,
     vec: Vec<u8>,
     bitmap: Option<Arc<Mutex<BitMap<MmapMut>>>>,
-    bitmap_path: Option<PathBuf>,
     state: State,
 }
 
@@ -31,7 +30,6 @@ impl Sender {
             socket,
             vec: vec![0u8; MTU],
             bitmap: None,
-            bitmap_path: None,
             state: State::Waiting,
         }
     }
@@ -50,12 +48,11 @@ impl Sink for Sender {
         }
 
         match item {
-            ChannelMessage::UploadStart(bitmap, bitmap_path) => {
+            ChannelMessage::UploadStart(bitmap) => {
                 if self.bitmap.is_some() {
                     panic!("Bitmap is already some");
                 }
                 self.bitmap = Some(bitmap);
-                self.bitmap_path = Some(bitmap_path);
             }
             ChannelMessage::UploadStatus => {
                 self.vec.resize(MTU, 0u8);
@@ -63,10 +60,6 @@ impl Sink for Sender {
                 let size = codec::write_runlength_encoded(&bitmap, &mut self.vec[..]).unwrap();
                 self.vec.truncate(size);
                 trace!("Sending UploadStatus: {:?}", self.vec);
-                if bitmap.all() && self.bitmap_path.as_ref().unwrap().exists() {
-                    info!("Remove bitmap file");
-                    fs::remove_file(self.bitmap_path.as_ref().unwrap()).unwrap();
-                }
                 self.state = State::Sending;
             }
         }

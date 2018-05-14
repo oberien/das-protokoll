@@ -52,6 +52,10 @@ fn main() {
     if opt.server {
         server::run();
     } else {
+        if opt.files.is_none() {
+            eprintln!("Files required for client mode. Execute --help for help.");
+            return;
+        }
         client::client(opt).unwrap();
     }
 }

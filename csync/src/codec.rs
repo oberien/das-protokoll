@@ -251,7 +251,6 @@ impl MissingRanges {
         let &MissingRange(from, _) = self.missing.iter().find(|&&MissingRange(from, to)| to > self.cursor)?;
         self.cursor = cmp::max(self.cursor, from);
         let ret = self.cursor;
-        println!("advancing cursor {:?}", self);
         self.cursor += 1;
         Some(ret)
     }

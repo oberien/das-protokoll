@@ -38,6 +38,7 @@ pub enum State {
 pub struct WaitForChunk {
     file: PollEvented2<File<StdFile>>,
     bitmap: Arc<Mutex<BitMap<MmapMut>>>,
+    bitmap_path: PathBuf,
     buf: Vec<u8>,
     chunk_info: ChunkInfo,
 }
@@ -46,6 +47,7 @@ type WriteChunk = io::WriteAll<PollEvented2<File<StdFile>>, Chunk>;
 
 pub struct WritingChunk {
     bitmap: Arc<Mutex<BitMap<MmapMut>>>,
+    bitmap_path: PathBuf,
     chunk_info: ChunkInfo,
     future: WriteChunk,
 }
@@ -99,7 +101,7 @@ impl Receiver {
             .read(true)
             .append(true)
             .create(true)
-            .open(bitmap_path.clone())
+            .open(&bitmap_path)
             .unwrap();
 
         let bitmap_file_len = (chunk_info.num_chunks + 7) / 8;
@@ -120,8 +122,7 @@ impl Receiver {
         if continue_upload {
             //debug!("Continue Upload file: {:x?}", bitmap);
             if bitmap.all() {
-                warn!("Continue upload, but all chunks are already received???");
-                bitmap.reset();
+                warn!("Continue upload, but all chunks are already received.");
             }
             file.append(true);
         }
@@ -131,11 +132,12 @@ impl Receiver {
         file.set_len(req.length as u64).unwrap();
 
         let bitmap = Arc::new(Mutex::new(bitmap));
-        self.tx.unbounded_send(ChannelMessage::UploadStart(Arc::clone(&bitmap), bitmap_path)).unwrap();
+        self.tx.unbounded_send(ChannelMessage::UploadStart(Arc::clone(&bitmap))).unwrap();
 
         self.state = State::WaitForAck(WaitForChunk {
             file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
             bitmap,
+            bitmap_path,
             buf: Vec::with_capacity(MTU),
             chunk_info,
         });
@@ -151,7 +153,7 @@ impl Receiver {
 
     }
 
-    pub fn chunk(&mut self, chunk: Chunk, chunk_info: ChunkInfo,
+    pub fn chunk(&mut self, chunk: Chunk, chunk_info: ChunkInfo, bitmap_path: PathBuf,
                  mut file: PollEvented2<File<StdFile>>, bitmap: Arc<Mutex<BitMap<MmapMut>>>) {
         self.congestion.ipt_packet();
         if bitmap.lock().unwrap().get(chunk.index) {
@@ -159,6 +161,7 @@ impl Receiver {
             self.state = State::WaitForChunk(WaitForChunk {
                 file,
                 bitmap,
+                bitmap_path,
                 buf: chunk.into_vec(),
                 chunk_info,
             });
@@ -169,6 +172,7 @@ impl Receiver {
         let future = io::write_all(file, chunk);
         self.state = State::WritingChunk(WritingChunk {
             bitmap,
+            bitmap_path,
             chunk_info,
             future,
         });
@@ -218,6 +222,7 @@ impl Stream for Receiver {
                 file,
                 buf: chunk.into_vec(),
                 bitmap: state.bitmap,
+                bitmap_path: state.bitmap_path,
                 chunk_info: state.chunk_info,
             });
         }
@@ -241,11 +246,19 @@ impl Stream for Receiver {
                 let chunk = Chunk::decode(state.buf, state.chunk_info.index_field_size);
                 match chunk.index.wrapping_sub(state.chunk_info.num_chunks) {
                     0 => {
+                        let all = state.bitmap.lock().unwrap().all();
+                        if !all {
+                            error!("Got FIN from client, but bitmap is not full???");
+                        }
                         debug!("Moving to shutdown");
+                        if all && state.bitmap_path.exists() {
+                            info!("Remove bitmap file");
+                            fs::remove_file(state.bitmap_path).unwrap();
+                        }
                         self.congestion.shutdown();
                         self.state = State::Shutdown(chunk.into_vec());
                     },
-                    _ => self.chunk(chunk, state.chunk_info, state.file, state.bitmap)
+                    _ => self.chunk(chunk, state.chunk_info, state.bitmap_path, state.file, state.bitmap)
                 }
             }
             State::WritingChunk(_) => unreachable!(),

@@ -23,7 +23,7 @@ mod sender;
 mod congestion;
 
 pub enum ChannelMessage {
-    UploadStart(Arc<Mutex<BitMap<MmapMut>>>, PathBuf),
+    UploadStart(Arc<Mutex<BitMap<MmapMut>>>),
     UploadStatus,
 }
 
