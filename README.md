@@ -150,3 +150,10 @@
 * File changes during upload
 * File partially uploaded, connection aborts, file changes, new connection, file upload continues
 * Congestion Control
+
+
+# How to run
+
+Install Rust+Cargo: https://www.rust-lang.org/
+
+Inside the `csync` directory, invoke `cargo build`. This compiles a binary to `./target/debug/csync`. This is our `csync` client, test this.
