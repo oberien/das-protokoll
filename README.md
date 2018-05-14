@@ -4,11 +4,111 @@
 
 Install Rust+Cargo: https://www.rust-lang.org/
 
-Inside the `csync` directory, invoke `cargo build`. This compiles a binary to `./target/debug/csync`. This is our `csync` client, test this.
+Inside the `csync` directory, invoke `cargo build`.
+This compiles a binary to `./target/debug/csync`.
+This is our `csync` client, test this.
+`csync --help` shows the help of the program.
+
+We include a pre-built `csync` binary, built for linux systems.
+
+Logging for the server can be enabled by passing the environment variable
+`RUST_LOG=csync=debug` where `debug` is the logging level.
+Supported logging levels are `error`, `warn`, `info`, `debug` and `trace`.
 
 Notice that the implementation uses unix-specific operations for asynchronous file IO.
 Thus, it may not compile on every system.
 It was tested on arch-linux and Ubuntu.
+
+Both on a connection abort due to the triggered 10 second timeout and on a
+successful termination the server will currently print the following error
+message:
+
+```
+Error during receive: Timeout
+Client finished with error: ()
+```
+
+This is due to the server waiting for 10 seconds after the successful
+termination of the connection as explained within the specification.
+The same code is used to trigger the connection abort timeout and the 10 second
+timeout of the shutdown state, resulting in this incorrect error message.
+
+# Issues during Implementation
+
+We decided to handle multiple connections at the same time on the server side
+with asynchronous IO.
+This means that we should be able to easily handle the c10k problem, given
+some sort of send-slowdown is added to the client (which currently pumps out
+packets as fast as possible for the lack of congestion control).
+Unfortunately rust's async story isn't set in stone, yet.
+In fact, it is currently changing heavily with futures 0.2 being released,
+futures 0.3 already being worked on, and `async` and `await` keywords being
+added to the language itself.
+Thus, we needed to decide on which version of which libraries to use and test
+which versions of those libraries were compatible with each other and with which
+futures version.
+
+Another problem was the lack of `async` / `await` currently in the language.
+Currently there is a nightly-only library which adds async / await macros, but
+that only compiles on a few nightly versions and produces a lot of compiler
+bugs.
+Additionally, one of our members did not want to use nightly, but stay with
+stable, which made that library a no-go.
+
+Rust does not (yet) have a performant platform-independent library for file IO.
+We worked around that problem by using the unix-only library `tokio-file-unix`.
+
+The library `tokio-file-unix` did not implement support for seeking in the file,
+which our protocol relies heavily upon.
+With [a pull request implementing that functionality](https://github.com/Rufflewind/tokio-file-unix/pull/10)
+we were able to solve this problem.
+
+While there are bitmap implementations for rust, none of them supported
+owning borrowed data.
+Either they need to own the data, or they only worked on borrowed data.
+We mmap the bitmap, which leaves us with owning borrowed data.
+Thus we needed to implement our own bitmap (in the folder bitte-ein-bit).
+
+The linux kernel has support for MTU probing.
+Unfortunately we can't use that from within rust.
+That is why we moved MTU probing to Further Work for now.
+
+# Spec Changes during Implementation
+
+The main selling point of the specification is the runlength encoding of the
+bitmap to send missing chunks to the client.
+This idea was unchanged from the very beginning.
+
+We changed the handshake and the encoding of packets.
+
+In the beginning our idea was to have a minimal handshake to get precise RTT
+measurements both on the server and the client side.
+It turned out to be easier to not implement such a handshake, but instead to
+directly state everything connection-initiating in the very first packet from
+the client to the server.
+Thus we combined the login and command packets into a single login packet.
+
+In the encoding we first left out some length prefixes if the prefixed value
+was the last one in the packet, because reading until the end of the packet
+would already reveal the length.
+While this is a nice optimization, it only leaves out a few bytes and makes
+manual parsing when inspecting packets more complicated.
+That's why we decided to prepend every variable length data with a varint length
+prefix.
+
+Similarly, we thought about adding context-sensitive commands and data, but
+decided against it, because if a single packet is viewed, it should be parsable
+by a human without too much context around it.
+
+# Spec as incomplete and partially incorrect Notes
+
+For the actual spec look at [specification.pdf](specification.pdf) or its raw
+form [specification.md](specification.md).
+The full specification can be built with pandoc with the following command line:
+
+```sh
+pandoc specification.md -o specification.pdf
+```
 
 ## General Design
 
