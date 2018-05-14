@@ -34,7 +34,7 @@ pub fn client(opt: super::Opt) -> Result<(), Error> {
 }
 
 pub fn client_once(filename: &str, opt: &super::Opt) -> Result<(), Error>  {
-    let socket = StdUdp::bind("127.0.0.1:0")?;
+    let socket = StdUdp::bind("0.0.0.0:0")?;
     let server = &(opt.host.as_str(), opt.port).to_socket_addrs().unwrap().next().unwrap();
     socket.connect(server)?;
 

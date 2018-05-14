@@ -1,0 +1,2 @@
+#!/bin/sh
+zip -r das-protokoll.zip README.md specification.md specification.pdf bitte-ein-bit/Cargo.toml bitte-ein-bit/Cargo.lock bitte-ein-bit/src csync/Cargo.toml csync/Cargo.lock csync/csync csync/src

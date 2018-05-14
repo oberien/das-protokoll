@@ -32,6 +32,11 @@ This is due to the server waiting for 10 seconds after the successful
 termination of the connection as explained within the specification.
 The same code is used to trigger the connection abort timeout and the 10 second
 timeout of the shutdown state, resulting in this incorrect error message.
+The following info log indicates a successful transmission:
+
+```
+INFO 2018-05-14T20:35:56Z: csync::server::receiver: Remove bitmap file
+```
 
 # Issues during Implementation
 

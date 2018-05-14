@@ -50,7 +50,7 @@ fn main() {
     let opt = Opt::from_args();
 
     if opt.server {
-        server::run();
+        server::run(opt);
     } else {
         if opt.files.is_none() {
             eprintln!("Files required for client mode. Execute --help for help.");
