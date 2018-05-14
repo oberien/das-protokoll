@@ -134,7 +134,7 @@ impl Receiver {
         let bitmap = Arc::new(Mutex::new(bitmap));
         self.tx.unbounded_send(ChannelMessage::UploadStart(Arc::clone(&bitmap))).unwrap();
 
-        self.state = State::WaitForAck(WaitForChunk {
+        self.state = State::WaitForChunk(WaitForChunk {
             file: File::new_nb(file).unwrap().into_io(&Handle::current()).unwrap(),
             bitmap,
             bitmap_path,
