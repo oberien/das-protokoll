@@ -151,16 +151,15 @@ pub struct ChunkInfo {
 }
 
 /// Calculates and returns the ChunkInfo for the given file length.
-pub fn index_field_size(data_length: u64) -> ChunkInfo {
-    let length = data_length + 1; // additional space for extension messages
-
+pub fn index_field_size(length: u64) -> ChunkInfo {
     let mut index_field_size = 1;
     let mut chunk_size;
     let mut num_chunks;
     loop {
         chunk_size = MTU as u64 - index_field_size;
         // prevent overflow
-        num_chunks = length / chunk_size + (length % chunk_size != 0) as u64;
+        // + 1 as additional space for extension messages
+        num_chunks = length / chunk_size + (length % chunk_size != 0) as u64 + 1;
         if num_chunks <= 1 << (index_field_size * 8) {
             break;
         }
@@ -170,8 +169,8 @@ pub fn index_field_size(data_length: u64) -> ChunkInfo {
     ChunkInfo {
         index_field_size,
         chunk_size,
-        num_chunks: (data_length + chunk_size - 1) / chunk_size,
-        last_chunk_size: data_length % chunk_size,
+        num_chunks: length / chunk_size + (length % chunk_size != 0) as u64,
+        last_chunk_size: length % chunk_size,
     }
 }
 
