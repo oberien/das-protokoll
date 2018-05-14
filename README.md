@@ -1,5 +1,15 @@
 # Protokoll für Richtigkeit, Ordnung, Transport, Optimierung, Kanalunabhängigkeit, Ortsunabhängigkeit, Latenzminimierung und balancierte Lastverteilung (Das PROTOKOLL)
 
+# How to run
+
+Install Rust+Cargo: https://www.rust-lang.org/
+
+Inside the `csync` directory, invoke `cargo build`. This compiles a binary to `./target/debug/csync`. This is our `csync` client, test this.
+
+Notice that the implementation uses unix-specific operations for asynchronous file IO.
+Thus, it may not compile on every system.
+It was tested on arch-linux and Ubuntu.
+
 ## General Design
 
 * 3-way-handshake to get RTT information
@@ -151,9 +161,3 @@
 * File partially uploaded, connection aborts, file changes, new connection, file upload continues
 * Congestion Control
 
-
-# How to run
-
-Install Rust+Cargo: https://www.rust-lang.org/
-
-Inside the `csync` directory, invoke `cargo build`. This compiles a binary to `./target/debug/csync`. This is our `csync` client, test this.
