@@ -38,6 +38,9 @@ The following info log indicates a successful transmission:
 INFO 2018-05-14T20:35:56Z: csync::server::receiver: Remove bitmap file
 ```
 
+The client does not implement any timeout and needs to be restarted when a
+packet in the handshake is lost.
+
 # Issues during Implementation
 
 We decided to handle multiple connections at the same time on the server side
