@@ -24,6 +24,7 @@ mod server;
 mod client;
 mod codec;
 mod timeout;
+mod stream;
 
 use structopt::StructOpt;
 
