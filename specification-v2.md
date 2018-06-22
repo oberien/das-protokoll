@@ -80,23 +80,53 @@ The time between sending a packet and receiving an answer to that packet.
 
 The time between reception of two packets in the same UDP flow.
 
+### `inotify`
+
+On Linux based systems the inotify provides a mechanism for monitoring
+file system events [@inotify].
+
+### FUSE
+
+Filesystem in Userspace is an interface to allow userspace programs to create
+custom file systems, handling all reads, writes and events themselves.
+
+### WebDAV
+
+WebDAV is an extension to HTTP allowing file operations.
+
+### Samba
+
+Samba is a network protocol for file transfers.
+
+### NFS
+
+Network File System specifies a protocol for communication in a distributed
+network storage system.
+
 # Design
 
 This specification describes three main different aspects, before combining them
 into the final protocol.
+First, the frontend is what is creating the actual files.
+It takes the information from the blockdb to assemble files.
+Second, the blockdb is the internal representation of blocks of files.
+Third, the node network topology will be discussed.
 
 ## Frontend
 
-* frontend
-    + actual files / file tree
-    + abstract, e.g.
-        - FUSE (Filesystem in Userspace)
-        - plain files
-        - webdav / http api
-        - samba/nfs
-        - …
-    + render the current tree state
-    + propagate changes back, translating them into blockdb changes
+The frontend is used to generate the actual file tree and file content.
+It uses the information stored in the blockdb to assemble files.
+It is informed about changes in the blockdb, which it MUST propagate to the
+actual files.
+Additionally, it MUST detect changes of files, translating them into blockdb
+changes.
+
+The actual file-backend of the frontend are deliberately unspecified to allow
+for use-case implementation specific optimizations.
+Examples for different file-backends are plain files with `inotify`, FUSE,
+a webdav / HTTP API or existing network file storages like Samba or NFS.
+
+The reference implementation uses plain files with `inotify`.
 
 ## BlockDB
 
@@ -286,7 +316,7 @@ TODO
     + including fine grained multi user permissions
 * idempotent
 
-#### Filesystem Crypto
+#### File system Crypto
 
 * v1: 1 folder/root = 1 user = 1 symmetric key, end of the story
 * blockdb implicitly authenticated by blockid (Encrypt-then-MAC)
@@ -352,3 +382,5 @@ TODO
 
 # Out of Scope
 
+
+[@inotify]: http://man7.org/linux/man-pages/man7/inotify.7.html
