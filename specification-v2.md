@@ -130,21 +130,50 @@ The reference implementation uses plain files with `inotify`.
 
 ## BlockDB
 
+The blockdb is the core of the specification.
+It stores files and the file tree as an efficient internal representation.
+This allows certain optimisations like only needing to store equal files once,
+reducing file transfer through usage of existing chunks and chunk level
+encryption.  
+The blockdb is an independent storage of raw blocks.
+It delivers information to the frontend, allowing it to render the file-tree.
+In general it's a modified version of a Merkle-Tree with use-case specific
+optimisations.
+Just as the frontend, the blockdb has a deliberately unspecified backend to
+store blocks in.
+Examples are plain files or databases with large blob storage.
+
+### Invariants
+
+The blockdb has several invariants.
+Each block is identified by its blockid, which is the hash of the encrypted block.
+Thus blocks are copy on write (CoW).
+The hash algorithm is configurable, but not compatible.
+If it's changed, the entire blockdb must be converted accordingly on every participant.
+The suggested hash algorithm is Keccak-256.  
+The length of blocks is variable, blocks can be arbitrarily large.
+By default each file and directory is a single block.
+Partial blocks allow resumption of incomplete or aborted transfers and SHOULD
+be supported by implementations to reduce network overhead.
+
+### Compression
+
+The blockdb MAY implement compression.
+Compression must be performed on the plaintext before encryption is applied.
+After encryption the output can't be distinguished from random data.
+Thus, encrypted data has a very high entropy and can't be compressed well.
+This results in the requirement to implement the same compression on every client.
+Otherwise decrypted, but compressed data could incorrectly interpreted as
+the actual plaintext, rendering the file invalid.
+
+### Blocks
+
+There are three different types of blocks.
+
+
+TODO: How partial blocks?
+
 * blockdb
-    + independent storage of raw blocks
-    + used to construct actual file-tree (frontend)
-    + modified Merkle-Tree
-    + abstract backend, e.g.
-        - plain files
-        - sqlite
-        - …
-    + invariants:
-        - block identified by blockid, aka hash(block), thus is CoW
-        - hash algorithm configurable but not compatible - if you wanna change it, you have to convert your entire db on every participant
-        - variable block size, by default each file is one block and each dir is one block
-        - blocks can be arbitrarily large
-        - can store partial blocks! (e.g. incomplete/aborted transfers)
-    + MAY use compression! lots of low hanging fruit here in terms of space savings!
     + different types of blocks:
         - leaf blocks
             * actual file contents
@@ -379,6 +408,9 @@ TODO
 # Error Handling
 
 # Future Work
+
+Compression methods could be specified, allowing the use of multiple compression
+algorithms with user configuration.
 
 # Out of Scope
 
