@@ -8,6 +8,7 @@ toc: true
 header-includes: |
   \usepackage{mathtools}
   \usepackage{cleveref}
+  \usepackage{rotating}
   \DeclarePairedDelimiter{\ceil}{\lceil}{\rceil}
   \DeclarePairedDelimiter{\floor}{\lfloor}{\rfloor}
 ---
@@ -73,8 +74,10 @@ The time between sending a packet and receiving an answer to that packet.
 
 ### `inotify`
 
-On Linux based systems the inotify provides a mechanism for monitoring
-file system events [@inotify].
+On Linux based systems inotify[^inotify] provides a mechanism for monitoring
+file system events.
+
+[^inotify]: http://man7.org/linux/man-pages/man7/inotify.7.html
 
 ### FUSE
 
@@ -474,6 +477,17 @@ In that case, the connection is removed and a new connection needs to be establi
 
 There is no graceful connection teardown. Peers close the connection by simply ceasing to communicate.
 
+### Protocol State Machine
+
+In \cref{statemachine} the statemachine flow chart of the protocol can be seen.
+
+\begin{sidewaysfigure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{statemachine.pdf}
+  \caption{Protocol State Machine}
+  \label{statemachine}
+\end{sidewaysfigure}
+
 # Encoding
 
 The transfer protocol encoding is performed as described in PROTOKOLL v1,
@@ -725,9 +739,3 @@ filesystem-level compression as a way to both improve throughput and save space.
 Real-world users report average compression ratios as high as 2x (as well as a proportional increase in throughput).
 Because the PROTOKOLL is essentially a distributed file system, block-level compression would be a useful feature - especially
 considering that this also improves transfer speeds.
-
-
-# Out of Scope
-
-
-[@inotify]: http://man7.org/linux/man-pages/man7/inotify.7.html

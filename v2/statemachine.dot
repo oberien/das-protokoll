@@ -1,0 +1,68 @@
+digraph StateMachine {
+    node [shape=box];
+    
+    Start [shape=oval];
+    isserver [label="Is Server?", shape=diamond];
+    poll [label="Poll Server"];
+    wait [label="Wait for Message\n or any Timeout"];
+    
+    Start->isserver;
+    isserver->poll [label="No"];
+    isserver->wait [label="Yes"];
+    poll->wait;
+    { rank=same; isserver, poll; }
+    wait->isserver [label="Poll Timeout", tailport=w, headport=w];
+    
+    sendstatusupdate2 [label="Send Status Update"];
+    wait->sendstatusupdate2 [label="Status Update Timeout"];
+    sendstatusupdate2->isserver [tailport=w, headport=w];
+    
+    writechunk [label="Write Chunk"];
+    markchunkreceived [label="Mark Chunk Received"];
+    sendstatusupdate3 [label="Send Status Update\n(ifneedbe)"];
+    wait->writechunk [label="Chunk Received"];
+    writechunk->markchunkreceived->sendstatusupdate3;
+    sendstatusupdate3->isserver [tailport=w, headport=w];
+    
+    resetcursor [label="Reset Cursor"];
+    sendchunk [label="Send next Chunk"];
+    wait->resetcursor [label="Status Update Received"];
+    resetcursor->sendchunk;
+    sendchunk->isserver [headport=w];
+    
+    istraversed [label="Traverse Finished?", shape=diamond];
+    traverse [label="Traverse Tree"];
+    isnewchunk [label="Unknown Chunk found?", shape=diamond];
+    requestchunk [label="Request Unknown Chunk"];
+    updateroot [label="Update Root"];
+    sendrootres [label="Send Root Update Response\nif triggered by Root Update"];
+    wait->istraversed [label="Root Update"];
+    istraversed->traverse [label="No"];
+    istraversed->updateroot [label="Yes"];
+    updateroot->sendrootres;
+    sendrootres->isserver [headport=w];
+    traverse->isnewchunk;
+    isnewchunk->requestchunk [label="Yes"];
+    isnewchunk->istraversed [label=No];
+    requestchunk->istraversed;
+    
+    wait->istraversed [label="Root Update Response"];
+    
+    ischunkidzero [label="chunkid == 0", shape=diamond];
+    randomchunkid [label="chunkid = random()"];
+    allocblock [label="Allocate Block"]
+    sendchunkreqres [label="Send Chunk Request Response"];
+    wait->ischunkidzero [label="Block Request"];
+    ischunkidzero->randomchunkid [label="Yes"];
+    ischunkidzero->allocblock [label="No"];
+    randomchunkid->allocblock;
+    allocblock->sendchunkreqres;
+    sendchunkreqres->isserver [headport=w];
+    
+    inittransfer [label="Init Transfer"];
+    setstatusupdatetimer [label="Set Status Update Timer"];
+    sendstatusupdate [label="Send Status Update"];
+    wait->inittransfer [label="Block Request Response"];
+    inittransfer->setstatusupdatetimer->sendstatusupdate;
+    sendstatusupdate->isserver [headport=w];
+}
