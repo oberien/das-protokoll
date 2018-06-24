@@ -16,8 +16,8 @@ header-includes: |
 
 This document defines version 2 of the Protokoll für Richtigkeit, Ordnung,
 Transport, Optimierung, Kanalunabhängigkeit, Ortsunabhängigkeit,
-Latenzminimierung und balancierte Lastverteilung, short Das PROTOKOLL.
-Das PROTOKOLL is a UDP-based protocol optimized for file synchronisation between peers.
+Latenzminimierung und balancierte Lastverteilung, short the PROTOKOLL.
+The PROTOKOLL is a UDP-based protocol optimized for file synchronisation between peers.
 It is designed for a single-user multiple-clients scenario and interacts nicely
 with both short-range networks and long fat pipes.
 It features interruptible, resumable, secure, parallel synchronization of files
@@ -35,7 +35,7 @@ until that packet is retransmitted and received.
 For file transfer this is undesired behaviour, because following data chunks
 do not depend on previous chunks and can be written to disk at the chunk's
 corresponding position.
-Das PROTOKOLL tries to eliminate these disadvantages of TCP by choosing UDP as
+The PROTOKOLL tries to eliminate these disadvantages of TCP by choosing UDP as
 underlying transport protocol.
 
 Together with this specification comes a reference implementation of the
@@ -98,7 +98,7 @@ network storage system.
 
 This specification describes three main different aspects, before combining them
 into the final protocol.
-First, the frontend is what is creating the actual files.
+First, the frontend represents the virtual filesystem to the user.
 It takes the information from the blockdb to assemble files.
 Second, the blockdb is the internal representation of blocks of files.
 Third, the node network topology will be discussed.
@@ -115,51 +115,43 @@ changes.
 The actual file-backend of the frontend are deliberately unspecified to allow
 for use-case implementation specific optimizations.
 Examples for different file-backends are plain files with `inotify`, FUSE,
-a webdav / HTTP API or existing network file storages like Samba or NFS.
+a webdav / HTTP API or other protocols like Samba or NFS.
 
-The reference implementation uses plain files with `inotify`.
+The reference implementation uses plain files with periodic polling.
 
 ## BlockDB
 
-The blockdb is the core of the specification.
+The blockdb is the core of the protocol.
+
 It stores files and the file tree as an efficient internal representation.
 This allows certain optimisations like only needing to store equal files once,
 reducing file transfer through usage of existing chunks and chunk level
 encryption.  
+
 The blockdb is an independent storage of raw blocks.
 It delivers information to the frontend, allowing it to render the file-tree.
 In general it's a modified version of a Merkle-Tree with use-case specific
 optimisations.
-Just as the frontend, the blockdb has a deliberately unspecified backend to
-store blocks in.
-Examples are plain files or databases with large blob storage.
-
-The root of the blockdb is a single blockref without any hints (thus only
-containing a blockid and its key).
-The root MUST point to a directory block.
+The blockdb "backend", i.e. the physical storage is unspecified.
+For instance, blocks can be stored as plain file or in a database.
+The reference implementation uses an (ephemeral) in-memory database to simplify the implementation.
 
 ### Invariants
 
 The blockdb has several invariants.
-Each block is identified by its blockid, which is the hash of the encrypted block.
+It is content-addressable: each block is identified by its blockid, which is the hash of the encrypted block.
 Thus blocks are copy on write (CoW).
 The hash algorithm is configurable, but not compatible.
-If it's changed, the entire blockdb must be converted accordingly on every participant.
-The suggested hash algorithm is Keccak-256.  
+If it's changed, the entire blockdb must be converted accordingly on every node.
+The suggested hash algorithm is Keccak-256.
 The length of blocks is variable, blocks can be arbitrarily large.
 By default each file and directory is a single block.
-Partial blocks allow resumption of incomplete or aborted transfers and SHOULD
+Storing partial blocks allow resumption of incomplete or aborted transfers and SHOULD
 be supported by implementations to reduce network overhead.
 
-### Compression
-
-The blockdb MAY implement compression.
-Compression must be performed on the plaintext before encryption is applied.
-After encryption the output can't be distinguished from random data.
-Thus, encrypted data has a very high entropy and can't be compressed well.
-This results in the requirement to implement the same compression on every client.
-Otherwise decrypted, but compressed data could incorrectly interpreted as
-the actual plaintext, rendering the file invalid.
+The root of the blockdb is a single blockref without any hints (thus only
+containing a blockid and its key).
+The root MUST point to a directory block.
 
 ### Blocks
 
@@ -175,16 +167,16 @@ Before the different block types are discussed in detail, blockrefs are needed.
 
 Blockrefs are used to identify and reference blocks and contain all information
 needed to decrypt those blocks.
-It consists of the blockid of the referenced block, its decryption key MAY
+It consists of the blockid of the referenced block, its decryption key and it MAY
 contain hints.
 Hints indicate that a block can be created from other blocks without needing to
 download the whole block if other blocks are present.
 Hints are a list of blockrefs, each with an offset and a length.
 If hints are provided, the referenced block can be created by concatenating
 the respective decrypted subranges of the referenced blocks each from their
-respective offset until their offset plus their respective length.
-This can be used to prevent the download of blocks which can be created from
-existing blocks.
+respective offset until their offset plus their respective length and then re-encrypting
+with the key of this block.
+This can be used to elide the transfer of blocks that can be combined from local data as well.
 This behaviour can be used when changes are detected within a file.
 Given a file is currently represented as a single block and that file is changed
 in the middle, the file can be split into three new leaf blocks referenced from
@@ -196,19 +188,19 @@ the new middle content.
 
 It is possible for any block to be referenced at multiple places.
 This is useful if two files are equivalent (e.g. copied), because that file
-will only be saved once.
-This case is automatically handled through the use of blockids in blockrefs.
+need only be saved once.
+The frontend implementation MAY provide a mechanism to deduplicate files.
 
-Hints MAY be provided.
 If a hint is provided, it MUST be correct.
 If a hint is provided, it MAY be used.
 Hints SHOULD be implemented for leaf blocks to reduce the number of downloads
 of blocks and to allow for efficient partial file modifications.
 If hints are used to create a block, the correctness of the hints MUST be
 verified by checking the hash of the final encrypted block against its blockid.
-If it is not used, the block needs to be downloaded, even though it may be
-possible to assemble it from existing already downloaded files.
-If a hint is present, it SHOULD be forwarded to other clients.
+
+Hints SHOULD be preserved as much as possible when modifying data.
+Note that a hint contain blockrefs which can in turn contain another hint.
+
 While the above example demonstrates hints for leaf blocks, they MAY also be
 implemented for file meta blocks to support very large files (e.g. 2 PB),
 which changes very often with less overhead.
@@ -264,11 +256,11 @@ any file is setup is the empty block.
 Everyone spontaneously starts out in the same state, where the blockid of the
 blockref of the root points to the empty block.
 Once an actual directory or file is added, the root blockref's blockid will
-point to that respective block.
+be updated to point to that respective block.
 
 ### Conflict Resolution
 
-Within the blockdb, there are no conflicts, because it is CoW.
+Within the blockdb there are no conflicts because it is CoW.
 The only conflict that can arise are root updates.
 If two clients try to update the root at the same time, a conflict resolution
 strategy MUST be applied.
@@ -279,35 +271,24 @@ breakage of other implementations.
 
 A simple conflict resolution possibility would be to let the longest chain win,
 in case of a tie use the numerically lower hash of the root to break ties.
-`Csync`, striving to be a minimal reference implementation of this specification,
-uses a simple RwLock on the server and is thus first come first serve.
+`scsync`, striving to be a minimal reference implementation of this specification,
+uses a simple mutex on the server and is thus first come first serve.
 In case of a conflict, the rejected client MUST fetch the new state and
 apply its changes to the new root again, then attempt another root update.
 
-Yet another possibility is to use a 3-way-merge.
-The frontend aggregates changes into transactions, that atomically update the
-entire tree up to the root.
-Then, the frontend has to sort out transaction aborts, which specifies the
-behaviour when the root was changed while applying the transaction.
-That allows an auto-merge on the directory level, the most recent version
-of each file is taken.
+This is essentially a classic 3-way-merge problem.
+As a simple solution we propose that the frontend agregates its changes as incrementally.
+Once the node attempts to perform this update it either succeeds or fails.
+If it fails, it will update its blockdb to the most recent state.
+The frontend MUST then re-apply the recorded changes:
+it can do an auto-merge on the directory level and compute a union of the new folder
+and the added elements.
 If there is a conflict on the file-level, both versions are linked into the
 directory tree (similar to how dropbox handles this case).
 
-## Node Network Topology
-
-Every client will have implemented the server functionality.
-One client is chosen to be the server and all other clients connect to it.
-This allows every client to synchronize a folder without the need of a dedicated
-server that doesn't actually want to synchronize the folder, but is only used
-as intermediate hop for communication.
-
-The final goal is to establish a Peer-to-Peer network, but this version still
-chooses a single peer as server.
-
 ## Protocol
 
-Version 2 of Das PROTOKOLL uses version 1 for block transfers.
+Version 2 of The PROTOKOLL uses version 1 for block transfers.
 Additionally, it adds a control protocol on top.
 
 ### General Design
@@ -345,7 +326,7 @@ It is expected by clients to poll regularly to be notified of updates.
 ### Control Protocol
 
 The Control Protocol is used as meta-layer to handle updates of the blockdb.
-It is rather stateless, holding only minimal connection information.
+It is mostly stateless, holding only minimal connection information.
 It has small packets and sends minimal data, without any contents.
 The actual block transfer, and thus file transfer, is performed with the
 Transfer Protocol.
@@ -361,15 +342,15 @@ Due to these arguments, the Control Protocol can have a simple structure.
 
 The Control Protocol is similar to a simple version of TCP.
 Packets are acknowledged by proper responses to the according package.
-If a control packet hasn't been acknowledged after $1.5 \cdot RTT$, it is
-assumed to be lost and the packet SHOULD be retransmitted.
+If a control packet hasn't been acknowledged after $2 \cdot RTT$, it is
+assumed to be lost and the packet MUST be retransmitted.
 
 The control protocol consist of five different packet types.
 
 #### Root Update
 
 The Root Update is used to indicate a root update from a given block to a new block.
-It is comprised of the blockid of the from-block and the blockref of the
+It consists of the blockid of the from-block and the blockref of the
 new block.
 
 The root update is used for multiple purposes.
@@ -483,17 +464,15 @@ Any status update causes the transfer protocol to jump back and un-idle.
 
 Connection setup is established by the 2-way-handshake described in
 [Root Update](#root-update).
-Connection teardown can occur at any time.
-It is performed with a 2-way handshake of FIN packets.
-The FIN handling SHOULD be performed similar to the FIN handling discussed in
-PROTOKOLL v1.
-Additionally, the connection is assumed to be dead if the client hasn't polled
+The handshake only establishes a connection if the nodes determine that a block transfer is required.
+
+The server assumes the connection is assumed to be dead if the client hasn't polled
 within 2.5 times its polling interval.
+The client assumes the connection to be dead if the server fails to respond to 3 root update pollings
+in a row.
 In that case, the connection is removed and a new connection needs to be established.
-The only state held by the server for a connection is the current transfer's chunkid.
-When the client polls the next time, the usual 2-way-handshake will be performed
-again, reinitiating the transfer's chunkid with a random number if there is
-actual transfer.
+
+There is no graceful connection teardown. Peers close the connection by simply ceasing to communicate.
 
 # Encoding
 
@@ -502,25 +481,23 @@ leaving out the filename.
 Control message data is encoded using Concise Binary Object Representation (CBOR)
 as described in [RFC 7049](https://tools.ietf.org/html/rfc7049).
 
-Each message starts with a flags-byte, starting at the most significant bit,
-followed by the message's payload.
-The FIN-flag is used to tear down connections.
-If the transfer-payload bit is set, the payload is a transfer chunk.
-If the transfer-status bit is set, the payload is a transfer status update.
-Otherwise, the payload is a control message.
+The first octet of each message determines the message type.
 
-```
-flags {
-    fin: bool,
-    transfer_payload: bool,
-    transfer_status: bool,
-},
-encoded payload...
-```
+Currently defined values:
+
+* transfer payload: 0
+* transfer status: 1
+* root update: 2
+* root update response: 3
+* block request: 4
+* block request response: 5
+
+All remaining values are reserved for future extensions.
+
+The structure of the rest of the packet is determined by its type.
 
 The protocol is mainly sent without encryption or signatures, except for the
 Root Update, which is AEAD'd as described in [Cryptography](#cryptography).
-The signature is placed after the payload.
 
 ## Primitives
 
@@ -534,13 +511,15 @@ hints: List<Blockref>, // list of blockrefs, optional
 
 ### Block Type
 
-The block type is an enum represented as u8.
+The block type is an enum represented as one octet.
 
 ```
 DIRECTORY = 1,
 FILE_META = 2,
 LEAF = 3,
 ```
+
+All remaining values are reserved for future extensions.
 
 ### Child
 
@@ -604,99 +583,149 @@ children: List<Child>,
 
 # Cryptography
 
-Cryptography is mostly handled within the blockdb.
-The protocol layer contains barely any cryptography.
-The main idea is that blocks and thus file content is encrypted with
-authentication.
-This design allows the whole network to store data, which might only be
-decrypted by some peers, but not by others.
-This allows a future version of this specification to handle synchronisation
-among multiple different users, each with their own access permissions.
+Security (confidentiality and authenticity) is handled by the blockdb.
+The protocol layer only needs to protect itself from denial of service, replay and spoofing attacks
+and thus contains barely any cryptography.
 
-This version assumes that a single user wants to synchronize files among
-multiple of their devices.
-Thus a shared secret can be established.
-That shared secret is used as symmetric key.
+
+Encrypting the actual user data (instead of relying on transport encryption) enables
+several interesting use cases (protocol extensions - future work), most notably nodes
+that can store blocks (and provide them to other nodes) without having access to the contents.
+Concrete examples would be a cloud storage provider that utilizes this to provide end-to-end
+security for their users or multi-user file synchronization with directory-level security
+(the key in a blockref could be stored multiple times, each copy encrypted with the public key of one authorized user).
+
+
+This (first) version assumes a single user with multiple fully trusted devices (one of which is the server).
+Consequently, a (symmetric) shared secret can be established, either by deriving one from a password (legacy)
+or ideally by generating random bytes on one device and securely transferring them to the others
+(e.g. by scanning a QR code).
+
+This shared secret serves as the master key for both encryption and authentication.
+
 
 ## BlockDB
 
-Every block in the blockdb is encrypted using an idempotent self-synchronizing
-cipher
+The blockdb naturally ensures authenticity because it's content-addressable:
+blocks are identified by their hash sum from a cryptograhically strong hash function and thus
+unforgeable - because the hash function is secure, coming up with different data for a given hash sum is infeasible.
 
-* idempotent
-* blockdb implicitly authenticated by blockid (Encrypt-then-MAC)
+To support subslicing of blocks they are encrypted using a stream cipher (e.g. AES-CTR).
+Their most notable weakness is malleability (modifications to the ciphertext perfectly apply to the plaintext) which
+is completely countered by our authentication however.
+
+Whenever a block is created, a random key is generated to encrypt it.
+Blockrefs contain both a blockid and the key so while traversing the directory tree you can always identify,
+authenticate and decrypt each block.
+
+### Hash as key
+
+Implementations MAY offer a configuration option to use a hash of the block's plaintext as encryption key.
+This option MUST be disabled by default.
+Doing this offers deduplication through the blockdb (the same file stored twice is only stored and transferred once)
+but it opens up a cryptographic weakness as it allows eavesdroppers to efficiently confirm if a given file is
+stored in the shared folder.
+This is problematic in case file contents are reasonably guessable - for example storing a picture of your credit
+card PIN is fine whereas storing it in a text file can be trivially broken.
+Implementations SHOULD instead offer other mechanisms for deduplication.
 
 ## Transmission Crypto
 
-* No Handshake
-* blocks already encrypted
-* control protocol mostly unencrypted
-* Only Root Update encrypted, because it contains the key
-    + AEAD
-    + GCM with random nonce
-    + nonce sent in same packet
-* knowing a blockid entitles you to its contents
-    + Guessing blockids not a problem, because attacker can't decrypt
-* to support subslicing, each block is encrypted with a self-synchronizing stream cipher
-* key of block = hash(plaintext) (possible attacks?)
-    + same file will result in same blockref (with a random key it won't)
-    + no duplicated data even if file exists multiple times
+Because each block is encrypted independently, from a security point of view there is no reason to protect the
+encrypted block contents. Simply knowing a block id entitles you to its contents, you can just request it
+and there are no further permission checks. Even correctly guessing a block id is not a problem.
+
+The control protocol manages the transfer of completely insensitive data and thus does not perform any cryptography
+for most of its tasks (just like TCP).
+
+The only exception to this is the root update message which effectively updates the entire state and serves as the
+starting point for both the authentication chain as well as the key chain:
+it contains the root block reference with both a block id and the corresponding key and is thus used to recursively
+decrypt and traverse the entire filesystem tree.
+For this reason it is protected using an AEAD cipher (e.g. AES-GCM) with a random initialization vector that is
+included in the packet.
+The encryption key is the user's master key.
+This prevents eavesdroppers from learning the root block's key and it also allows each genuine node to verify the
+update's legitimacy.
+The nonce's uniqueness is critical for cryptographic security but this is fine for this use case as a single user
+can't reasonably produce huge numbers of update transactions.
+
 
 ## Threat Model
 
-    + blockrefs
-        - NB changing the key of a blockref changes the plaintext
-        - however modifications of the key (and the ciphertext if the cipher is CCA secure) produce random changes in plaintext
+The attacker is not the user, i.e. does not know the master key (shared secret).
 
-* attacker is not the user, i.e. does not know the secret master key
-* attacker can eavesdrop on all network communications (Eve)
-* attacker can send/modify network traffic arbitrarily (Mallory)
-* confidentiality: encryption
-    + block contents are encrypted (provably secure, todo verify)
-    + transfers are transferring encrypted data
-    + side channel: block lengths
-    + side channel: block update frequency (roots/directory blocks trivially distinguishable)
-    + root updates are AEAD'd under the master key
-* authentication
-    + block contents unforgeable, have to match the hash
-    + merkle tree property: having a legit root confirms everything below
-    + root updates being aead ensures roots are legit
-    + real danger here: leaf block contents are completely arbitrary, you can serialize a root in there if you find a way to control the root ptr
-* denial of service
-    + trivial; withhold all traffic
-    + defending against attacker that can spoof/inject but not drop: future work, right now trivial by just sending FINs
-* resource exhaustion
-    + synflood -> TODO need smth like syncookies to mitigate
-* Replay
-    + irrelevant, known blocks discarded
-    + can only result in DoS, which is possible anyway
-    + TODO
-* Spoofed attacker
-    + probably irrelevant, same as replay
-    + TODO
-* Can we be used as DoS amplifier?
-    + TODO
-* ddos
-    + transfers bound to handshake
-* 1 user means "inside job" attacks (access someone else's private folder, resource exhaustion attacks after auth, etc) don't apply
-* instead, each user has its own seperate storage (block db) on the server
+We consider a passive attacker "Eve" that can eavesdrop on all network communications,
+an attacker "Frank" that can't modify or even read our communication but inject/spoof arbitrary packets
+and an active attacker "Mallory" that can read/send/modify network traffic arbitrarily.
 
-# Minimum MSS
+Confidentiality is ensured by a chain of encryption keys starting from the secure master key.
+Eve and Mallory can learn block ids as well as the lengths (arguably a non-negligible side channel)
+of blocks but never the actual contents.
+The entire block transfer protocol is deliberately constructed to never deal with sensitive data.
+The only sensitive message is the root update message which is however protected by an AEAD cipher.
 
-    + Variable receive windows, must be large enough to hold largest variant + largest possible control payload
+While Mallory can disrupt the block transfer state and thus perform a denial of service attack
+she can trivially prevent any protocol from succeeding simply by withholding all traffic.
+The only improvement on this is that by altering the transfer payloads she can additionally
+cause both participants to waste resources on unsuccessful transfer attempts: block ids always cover the entirety
+of a block so if any data was changed the receiver can only notice this once the entire block has arrived and
+is forced to discard all of it (there's no way to tell what part was modified).
+One notable special case of this is that Mallory can destroy a long-running (hours) block transfer with negligible effort
+(modifying a single packet is enough).
+Note however that this attack can't be performed by Frank due to the randomization of block ids.
+The AEAD cipher prevents Mallory from modifying root update messages however and the merkle tree style structure
+below that precludes any other modifications.
 
-# Extensibility
+The position of Frank is a classic candidate for both denial of service and distributed denial of service (amplification) attacks.
+As we discuss above, Frank can not disrupt block transfers because he can't guess the chunk ids (with non-negligible probability).
+While Frank is fully capable of forging valid status message (which are completely unprotected) this does not pose a problem.
+He never able to produce a valid root update message since he doesn't know the master key, forging a root update response
+requires the nonce from the request, block requests may allocate a transfer (assuming he somehow learns a valid block id)
+but the peers can just carry on and ignore this transfer
+and finally block request responses are ignored unless the peer has specifically requested this block and is still waiting for a response.
 
-# Error Handling
+Amplification attacks are only possible against the server (clients drop packets from anyone but the server).
+However, connections are always initiated with a root update message.
+Even if Frank were to somehow learn an old valid root update message this only gets him a root update response stating that
+the root update was rejected (which is shorter than the request).
+
+Classic resource exhaustion attacks attack a protocol's handshake ("SYN flood").
+The PROTOKOLL's root update mechanism is effectively a stateless (even idempotent) handshake that only establishes a connection
+if the update is valid.
+While servers MAY remember clients regardless to push update notifications they MUST implement an upper limit on this memory.
+Both Mallory and Frank could cause the sender to allocate additional block transfers during an existing transfer.
+However the amount of resources consumed this way is limited to the number of valid blockids they know (a single transfer will never contain the same block twice).
+
+The root update message is idempotent and thus secure to replay attacks.
+
 
 # Future Work
 
-Compression methods could be specified, allowing the use of multiple compression
-algorithms with user configuration.
+The encryption scheme is designed with extensibility in mind.
+While the version specified here only supports a single master key future versions could
+improve on this with elaborate systems like public key infrastructure and fine grained directory/file-level permissions.
 
-Edge case: File A represented as file meta block, File A copied as File B,
-File B is a single Leaf Block. File A and File B saved separately / duplicated.
-Handled by frontend.
+The protocol is designed for peer to peer use cases.
+While this specification describes a server-client architecture it can be adapted to a peer to peer protocol with few changes.
+
+While the current specification requires a peer to recursively request all blocks in the current filesystem state
+this is by no means an inevitability. A protocol extension could be designed that stores blocks on a network of nodes
+using some load balancing heuristic (e.g. the block hash). You could also have "thin clients" that fetch blocks as
+they are accessed, keeping only a local cache of the most commonly accessed blocks (or maybe not even that).
+
+On "long fat pipe" networks the current specification performs badly when transferring very deep and sparse folder hierarchies
+as every level requires roundtrips to set up and then perform the new block transfer.
+The design attempts to amortize this by transferring other blocks during those roundtrips but an actual solution requires "block
+inlining", i.e. embedding very small blocks inside parent blocks to avoid the block transfer overhead and ensure that the transfer layer
+is never idle.
+
+Since computation has become significantly faster than disk I/O in recent years modern filesystems commonly offer
+filesystem-level compression as a way to both improve throughput and save space.
+Real-world users report average compression ratios as high as 2x (as well as a proportional increase in throughput).
+Because the PROTOKOLL is essentially a distributed file system, block-level compression would be a useful feature - especially
+considering that this also improves transfer speeds.
+
 
 # Out of Scope
 
