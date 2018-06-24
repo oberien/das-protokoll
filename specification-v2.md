@@ -7,6 +7,7 @@ documenttype: scrartcl
 toc: true
 header-includes: |
   \usepackage{mathtools}
+  \usepackage{cleveref}
   \DeclarePairedDelimiter{\ceil}{\lceil}{\rceil}
   \DeclarePairedDelimiter{\floor}{\lfloor}{\rfloor}
 ---
@@ -56,12 +57,6 @@ NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED",  "MAY", and
 The User Datagram Protocol is an OSI layer 4 (transport layer) protocol
 [specified by the IETF](https://www.ietf.org/rfc/rfc768.txt).
 
-### UDP Flow
-
-The UDP flow for Das PROTOKOLL is defined for the server by the 2-tuple of the
-client's IP and port.
-For the client the UDP flow is defined as the 2-tuple of the server's IP and port.
-
 ### Maximum Segment Size (MSS)
 
 While MSS is a term defined by TCP, this specification uses MSS similarly for UDP.
@@ -75,10 +70,6 @@ connections of linux systems.
 ### Round-Trip Time (RTT)
 
 The time between sending a packet and receiving an answer to that packet.
-
-### Inter-Packet Time (IPT)
-
-The time between reception of two packets in the same UDP flow.
 
 ### `inotify`
 
@@ -143,6 +134,10 @@ Just as the frontend, the blockdb has a deliberately unspecified backend to
 store blocks in.
 Examples are plain files or databases with large blob storage.
 
+The root of the blockdb is a single blockref without any hints (thus only
+containing a blockid and its key).
+The root MUST point to a directory block.
+
 ### Invariants
 
 The blockdb has several invariants.
@@ -168,73 +163,226 @@ the actual plaintext, rendering the file invalid.
 
 ### Blocks
 
+Each block is identified by its blockid, which is the hash of the encrypted data.
 There are three different types of blocks.
+Directory blocks contain blockrefs to child directories or files and holds their
+metadata.
+Leaf blocks contain actual file contents, which can be any arbitrary payload data.
+File meta blocks represent a file consisting of multiple blocks.
+Before the different block types are discussed in detail, blockrefs are needed.
 
+#### Blockrefs
 
-TODO: How partial blocks?
+Blockrefs are used to identify and reference blocks and contain all information
+needed to decrypt those blocks.
+It consists of the blockid of the referenced block, its decryption key MAY
+contain hints.
+Hints indicate that a block can be created from other blocks without needing to
+download the whole block if other blocks are present.
+Hints are a list of blockrefs, each with an offset and a length.
+If hints are provided, the referenced block can be created by concatenating
+the respective decrypted subranges of the referenced blocks each from their
+respective offset until their offset plus their respective length.
+This can be used to prevent the download of blocks which can be created from
+existing blocks.
+This behaviour can be used when changes are detected within a file.
+Given a file is currently represented as a single block and that file is changed
+in the middle, the file can be split into three new leaf blocks referenced from
+a file meta block.
+The first leaf block hints at the beginning of the file's original block.
+The last part hints at the end of the file's original block.
+The middle part is a leaf block without any hints, because it is new, containing
+the new middle content.
 
-* blockdb
-    + different types of blocks:
-        - leaf blocks
-            * actual file contents
-            * contain arbitrary payload data
-        - file meta blocks
-            * a list of blockrefs
-            * the file is a concatenation of the blockref's payloads
-            * cycles of file meta blocks not easily possible due to merkle tree structure
-        - directory blocks
-            * files / folders and one blockref each
-            * metadata: Name, lastmodified, size
-    + blockref = (blockid, key, hints)
-        - NB changing the key of a blockref changes the plaintext
-        - however modifications of the key (and the ciphertext if the cipher is CCA secure) produce random changes in plaintext
-        - hints = Vec<(blockref, offset, length)>
-            * "this block consists of these parts of other blocks"
-            * prevent redownload of known subblocks
-            * important when subdividing file blocks (e.g. change this part here in the middle: separate into 3 leaf blocks: first hints at beginning of original block, last at end, middle is new -> no redownload of first and last leaf block)
-            * optional (can be empty or ignored), but can be used for optimizations
-            * if set, it MUST be correct
-            * correctness MUST be verified by blockid
-            * MAY be used
-            * SHOULD be forwarded
-            * MAY be implemented for file meta blocks (2 PB file which gets changed often) and directory blocks (directory with 1e6 files)
-            * SHOULD be implemented for leaf blocks
-* random thought: zfs module possible; control front- and backend; use snapshots as blockdb
+It is possible for any block to be referenced at multiple places.
+This is useful if two files are equivalent (e.g. copied), because that file
+will only be saved once.
+This case is automatically handled through the use of blockids in blockrefs.
+
+Hints MAY be provided.
+If a hint is provided, it MUST be correct.
+If a hint is provided, it MAY be used.
+Hints SHOULD be implemented for leaf blocks to reduce the number of downloads
+of blocks and to allow for efficient partial file modifications.
+If hints are used to create a block, the correctness of the hints MUST be
+verified by checking the hash of the final encrypted block against its blockid.
+If it is not used, the block needs to be downloaded, even though it may be
+possible to assemble it from existing already downloaded files.
+If a hint is present, it SHOULD be forwarded to other clients.
+While the above example demonstrates hints for leaf blocks, they MAY also be
+implemented for file meta blocks to support very large files (e.g. 2 PB),
+which changes very often with less overhead.
+They MAY also be supported for directory blocks to optimize small changes in a
+flat file tree (e.g. 1 million files in a single directory).
+
+#### Directory Blocks
+
+Directory blocks are a list of blockrefs to the directory's children.
+Each child MUST be annotated with its block type.
+Metadata MAY be provided along each blockref, like its name, date of creation
+(only available on file systems supporting it like NTFS, not e.g. on ext4), last
+modified, permissions, owner and group.
+Children can be other directory nodes, leaf nodes or file meta blocks.
+
+#### Leaf Blocks
+
+Leaf Blocks contain any arbitrary data.
+They can be used as whole files, or as file parts which are concatenated through
+file meta blocks.
+
+#### File Meta Blocks
+
+File meta blocks contain a list of blockrefs.
+The concatenation of the blocks referenced by blockrefs creates the final file.
 
 #### Example Merkle Tree
 
-### bootstrap
+In \cref{exmerkle} an example modified merkle tree can be seen.
+The root references `5891`, which is a directory node containing two blockrefs.
+One blockref points to the file `ff0b`, which has the name `bar` in that directory.
+The referenced directory itself contains a file named `qux`, which is the same
+as `bar` of the parent.
+Thus it's able to reference the same block.
+The file `baz` is a file meta block, stating that the file is comprised of the
+leaf nodes `110f` and `bd9d`.
+Additionally, `110f` has a hint, stating that it's equal to the subrange from
+byte 10 to 30 of `21bb`.
+Thus, if the block `21bb` already exists, the leaf block `110f` can be created
+without needing to download it.
 
-folder always starts out empty; empty block hash is known, thus no bootstrap is required - everyone spontaneously starts out in the same state
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{exmerkle.pdf}
+  \caption{Example Merkle Tree}
+  \label{exmerkle}
+\end{figure}
 
+### Bootstrap
 
-### conflict resolution
+The initial state of the blockdb of every client in the very beginning, before
+any file is setup is the empty block.
+Everyone spontaneously starts out in the same state, where the blockid of the
+blockref of the root points to the empty block.
+Once an actual directory or file is added, the root blockref's blockid will
+point to that respective block.
 
-* block db: there are no conflicts
-* root updates: longest chain wins, numerically lower hash to break ties
-    + Simplification for implementation (server-client): Just use an RwLock on server, first come first serve
-* bulk work done in the frontend
-    + frontend has to aggregate its changes into "transactions" that atomically update the entire tree up to the root
-    + frontend has to sort out "transaction aborts", aka you made a new root but it was rejected
-    + we basically have a 3way diff at this point
-    + can auto-merge on directory level: simply take the most recent version of each file
-    + can't auto-merge files -> link both versions into the directory tree, just like dropbox
-    
+### Conflict Resolution
+
+Within the blockdb, there are no conflicts, because it is CoW.
+The only conflict that can arise are root updates.
+If two clients try to update the root at the same time, a conflict resolution
+strategy MUST be applied.
+
+This specification does not enforce an explicit conflict resolution strategy,
+because it can be implementation dependent within every single client without
+breakage of other implementations.
+
+A simple conflict resolution possibility would be to let the longest chain win,
+in case of a tie use the numerically lower hash of the root to break ties.
+`Csync`, striving to be a minimal reference implementation of this specification,
+uses a simple RwLock on the server and is thus first come first serve.
+In case of a conflict, the rejected client MUST fetch the new state and
+apply its changes to the new root again, then attempt another root update.
+
+Yet another possibility is to use a 3-way-merge.
+The frontend aggregates changes into transactions, that atomically update the
+entire tree up to the root.
+Then, the frontend has to sort out transaction aborts, which specifies the
+behaviour when the root was changed while applying the transaction.
+That allows an auto-merge on the directory level, the most recent version
+of each file is taken.
+If there is a conflict on the file-level, both versions are linked into the
+directory tree (similar to how dropbox handles this case).
 
 ## Node Network Topology
 
+Every client will have implemented the server functionality.
 One client is chosen to be the server and all other clients connect to it.
+This allows every client to synchronize a folder without the need of a dedicated
+server that doesn't actually want to synchronize the folder, but is only used
+as intermediate hop for communication.
 
 ## Protocol
 
-### basic protocol graph
+Version 2 of Das PROTOKOLL uses version 1 for block transfers.
+Additionally, it adds a control protocol on top.
 
-### control protocol
+### General Design
 
-* similar to simple TCP
-    + Not often, not too relevant
-    + open transfers can still produce enough traffic to fill pipe
-    + TODO
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\textwidth]{protoseq.pdf}
+  \caption{Basic Protocol Sequence}
+  \label{protoseq}
+\end{figure}
+
+In \cref{protoseq} the basic protocol sequence is shown.
+Bob is chosen to be the server and Alice wants to synchronize changes.
+It is assumed that Alice and Bob have already established a connection.
+First, her frontend detects changes and updates the blockdb, creating a new root.
+A Root Update message is sent to Bob, which states that the root should be
+updated from `13fd` to `53d3`.
+Bob's root is at `13fd`, so the update is valid, but `53d3` is unknown.
+Thus he requests that block from Alice, who answers with a block request
+response allocating chunkids 0 through 2 to transfer that block.
+The transfer is initiated with Bob sending his first Status Update to Alice.
+After transferring that block, Bob requests two new missing blocks at the same
+time from Alice, who allocates different chunkids for both blocks.
+Those blocks can be transferred simultaneously, while Bob keeps traversing
+the new merkle tree, requesting all unknown blocks asynchronously.
+After having received all unknown blocks, Bob traverses the tree, verifying its
+integrity and consistency.
+Following, the root is updated, the frontend notified to update the files and
+a Root Update Response sent to all clients.
+The Root Update Response is acknowledged by a Root Update Response Ack.
+
+### Control Protocol
+
+The Control Protocol is used as meta-layer to handle updates of the blockdb.
+It is rather stateless, holding only minimal connection information.
+It has small packets and sends minimal data, without any contents.
+The actual block transfer, and thus file transfer, is performed with the
+Transfer Protocol.
+The Control Protocol can be used at the same time the Transfer Protocol is
+synchronizing files.
+Thus, most of the bandwidth is assumed to be occupied by the Transfer Protocol.
+Control packets are assumed to occur rarely compared to transfer packets, and
+they are assumed not to be too relevant.
+As long as a transfer is in progress, losses in the control protocol aren't
+relevant, because the main purpose of the control protocol is to initiate
+further transfers.
+Due to these arguments, the Control Protocol can have a simple structure.
+
+The Control Protocol is similar to a simple version of TCP.
+Packets are acknowledged by proper responses to the according package.
+If a control packet hasn't been acknowledged after $1.5 \cdot RTT$, it is
+assumed to be lost and the packet MUST be retransmitted.
+
+The control protocol consist of five different packet types.
+
+#### Root Update
+
+The Root Update is used to indicate a root update from a given block to a new block.
+It is comprised of the blockid of the from-block and the blockref of the
+new block.
+
+The root update is used for multiple purposes.
+Whenever a client wants to connect to the server, it MUST send a root update
+as first packet, where the from-blockid and the to-blockid are equal and point
+to the client blockdb's root.
+The server MUST respond with a root update, where the from-blockid and the
+to-blockid are equal to its blockdb's root.
+Then the client SHOULD update its state to match the server state if they are different.  
+The root update is also used to 
+
+
+#### Root Update Response
+
+#### Root Update Response Ack
+
+#### Block Request
+
+#### Block Request Response
 
 ### transfer protocol
 
@@ -368,6 +516,10 @@ TODO
 
 ## Threat Model
 
+    + blockrefs
+        - NB changing the key of a blockref changes the plaintext
+        - however modifications of the key (and the ciphertext if the cipher is CCA secure) produce random changes in plaintext
+
 * attacker is not the user, i.e. does not know the secret master key
 * attacker can eavesdrop on all network communications (Eve)
 * attacker can send/modify network traffic arbitrarily (Mallory)
@@ -411,6 +563,11 @@ TODO
 
 Compression methods could be specified, allowing the use of multiple compression
 algorithms with user configuration.
+
+Edge case: File A represented as file meta block, File A copied as File B,
+File B is a single Leaf Block. File A and File B saved separately / duplicated.
+Not a problem for FUSE, because copy can be recognized and file meta block
+referenced muiltiple times.
 
 # Out of Scope
 
