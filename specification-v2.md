@@ -302,6 +302,9 @@ This allows every client to synchronize a folder without the need of a dedicated
 server that doesn't actually want to synchronize the folder, but is only used
 as intermediate hop for communication.
 
+The final goal is to establish a Peer-to-Peer network, but this version still
+chooses a single peer as server.
+
 ## Protocol
 
 Version 2 of Das PROTOKOLL uses version 1 for block transfers.
@@ -333,8 +336,11 @@ the new merkle tree, requesting all unknown blocks asynchronously.
 After having received all unknown blocks, Bob traverses the tree, verifying its
 integrity and consistency.
 Following, the root is updated, the frontend notified to update the files and
-a Root Update Response sent to all clients.
-The Root Update Response is acknowledged by a Root Update Response Ack.
+a Root Update Response sent to all clients as push-notification.
+
+While the server does provide push-notifications, it is not guaranteed that they
+won't be lost; they aren't acknowledged.
+It is expected by clients to poll regularly to be notified of updates.
 
 ### Control Protocol
 
@@ -356,7 +362,7 @@ Due to these arguments, the Control Protocol can have a simple structure.
 The Control Protocol is similar to a simple version of TCP.
 Packets are acknowledged by proper responses to the according package.
 If a control packet hasn't been acknowledged after $1.5 \cdot RTT$, it is
-assumed to be lost and the packet MUST be retransmitted.
+assumed to be lost and the packet SHOULD be retransmitted.
 
 The control protocol consist of five different packet types.
 
@@ -380,10 +386,25 @@ as first packet, where the from-blockid and the to-blockid are equal and point
 to the client blockdb's root.
 The server MUST respond with a root update response, where the from-blockid and
 the to-blockid are equal to its blockdb's root.
-Then the client MUST respond with a Root Update Response Ack, to allow RTT
-information to be calculated.
 Additionally, the client SHOULD update its state to match the server state if
-they are different.  
+they are different.
+RTT information is only required to retransmit possibly lost control packets
+in a timely fashion.
+The client has RTT information from the 2-way-handshake.
+If the client needs to update its state, it'll respond with a Block Request, from
+which the Server is able to extract RTT information.
+The server only needs RTT information if it needs to request blocks and thus
+send control packet requests.
+This is only required if the client updates the root to a new state.
+In that case the server will get RTT information from a Block Request Response
+from the client after the server sent its Block Request.  
+As long as no RTT information is available, a sane default for retransmissions
+should be taken, like a few seconds.
+
+The root update is also used as means to perform state polling.
+The 2-way-handshake is reperformed, initiated by the client, such that the
+client detects possible modifications.
+Clients should poll in timely fashions depending on the use-case.
 
 #### Root Update Response
 
@@ -391,18 +412,14 @@ The Root Update Response is used by the server to inform clients about a changed
 root of the merkle tree.
 Just as the Root Update, the Root Update Response contains the from-blockid
 and to-blockref.
-This packet MUST be sent to every client whenever the root changes on the server.
-Each client MUST individually acknowledge the Root Update Response either with
-a Block Request of an unknown block, or with a Root Update Response Ack, if
-the client was able to update its root without any block downloads.
-
-#### Root Update Response Ack
-
-The Root Update Response Ack is used by clients to acknowledge a server's
-Root Update Response if the client was able to update its root without needing
-to download a block.
-Otherwise the respective Block Request would be an implicit acknowledgement
-of the reception of the Root Update Response.
+This packet MAY be sent to every client whenever the root changes on the server,
+to inform clients about possible root changes.
+This is similar to a push notification, but it is not acknowledged.
+If a client receives the update, it MAY update its internal state instantaneously
+to the new root (by fetching unknown blocks).
+If that packet is lost, that's fine, because clients will fetch at a later point
+anyway.
+Thus, the push notification is optional.
 
 #### Block Request
 
@@ -464,12 +481,19 @@ Any status update causes the transfer protocol to jump back and un-idle.
 
 ### Connection Management
 
-Connection setup is established by the 3-way-handshake described in
+Connection setup is established by the 2-way-handshake described in
 [Root Update](#root-update).
 Connection teardown can occur at any time.
 It is performed with a 2-way handshake of FIN packets.
 The FIN handling SHOULD be performed similar to the FIN handling discussed in
 PROTOKOLL v1.
+Additionally, the connection is assumed to be dead if the client hasn't polled
+within 2.5 times its polling interval.
+In that case, the connection is removed and a new connection needs to be established.
+The only state held by the server for a connection is the current transfer's chunkid.
+When the client polls the next time, the usual 2-way-handshake will be performed
+again, reinitiating the transfer's chunkid with a random number if there is
+actual transfer.
 
 # Encoding
 
@@ -580,16 +604,29 @@ children: List<Child>,
 
 # Cryptography
 
-* design goal: sophisticated/fancy crypto in later versions only
-    + including fine grained multi user permissions
+Cryptography is mostly handled within the blockdb.
+The protocol layer contains barely any cryptography.
+The main idea is that blocks and thus file content is encrypted with
+authentication.
+This design allows the whole network to store data, which might only be
+decrypted by some peers, but not by others.
+This allows a future version of this specification to handle synchronisation
+among multiple different users, each with their own access permissions.
+
+This version assumes that a single user wants to synchronize files among
+multiple of their devices.
+Thus a shared secret can be established.
+That shared secret is used as symmetric key.
+
+## BlockDB
+
+Every block in the blockdb is encrypted using an idempotent self-synchronizing
+cipher
+
 * idempotent
-
-#### File system Crypto
-
-* v1: 1 folder/root = 1 user = 1 symmetric key, end of the story
 * blockdb implicitly authenticated by blockid (Encrypt-then-MAC)
 
-#### Transmission Crypto
+## Transmission Crypto
 
 * No Handshake
 * blocks already encrypted
