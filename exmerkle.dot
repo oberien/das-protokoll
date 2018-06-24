@@ -1,0 +1,23 @@
+digraph Merkle {
+    nodesep=.5
+    node [color=Black,fontname=Courier,shape=box]
+    splines=lines
+    
+    root[label="(5891, key)", shape=none];
+    n5891[shape=record, label="{5891 | {<n522d>(522d, key)\ndirectory \"foo\" |<nff0b> (ff0b, key)\nleaf \"bar\"}}"]
+    n522d[shape=record, label="{522d | {<n86d0>(86d0,key)\nfilemeta \"baz\" |<nff0b> (ff0b, key)\nleaf \"qux\"}}"]
+    nff0b[shape=record, label="{ff0b | data}"]
+    n110f[shape=record, label="{110f | data}"]
+    nbd9d[shape=record, label="{bd9d | data}"]
+    n21bb[shape=record, label="{21bb | data}"]
+    n86d0[shape=record, label="{ 86d0 | {<n110f> (110f, key, hints=\n((21bb, key),\n offset=10,\n length=20)) |<nbd9d> (bd9d, key)}}"]
+    
+    root -> n5891
+    n5891:n522d -> n522d
+    n5891:nff0b -> nff0b
+    n522d:n86d0 -> n86d0
+    n522d:nff0b -> nff0b
+    n86d0:n110f -> n110f
+    n86d0:nbd9d -> nbd9d
+    n110f -> n21bb[label="offset=10, length=20", style=dotted]
+}
