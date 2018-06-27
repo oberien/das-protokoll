@@ -1,6 +1,10 @@
 [package]
 name = "scsync"
 version = "0.1.0"
-authors = ["oberien <jaro.fietz@gmx.de>"]
+authors = ["main() <main@ehvag.de>", "oberien <jaro.fietz@gmx.de>"]
 
 [dependencies]
+tokio = "0.1"
+tokio-io = "0.1"
+bytes = "0.4"
+futures = "0.1"
