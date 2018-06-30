@@ -34,29 +34,19 @@ impl BlockDb {
 }
 
 pub struct BlockRef {
-    blockid: BlockId,
-    key: Key,
-    hints: Vec<Hint>,
+    pub blockid: BlockId,
+    pub key: Key,
+    pub hints: Vec<Hint>,
 }
 
 pub struct Hint {
-    blockref: BlockRef,
-    offset: u64,
-    length: u64,
+    pub blockref: BlockRef,
+    pub offset: u64,
+    pub length: u64,
 }
 
 pub struct Block {
-    id: BlockId,
-    data: Vec<u8>,
-    available: Vec<bool>,
-}
-
-impl Block {
-    fn id(&self) -> BlockId {
-        self.id
-    }
-
-    fn len(&self) -> u64 {
-        self.data.len() as u64
-    }
+    pub id: BlockId,
+    pub data: Vec<u8>,
+    pub available: Vec<bool>,
 }
