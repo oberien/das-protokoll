@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-type BlockId = [u8; 32];
-type Key = [u8; 16];
+pub type BlockId = [u8; 32];
+pub type Key = [u8; 16];
 
 pub struct BlockDb {
     /// Current official root
@@ -48,5 +48,6 @@ pub struct Hint {
 pub struct Block {
     pub id: BlockId,
     pub data: Vec<u8>,
+    /// one bool per byte
     pub available: Vec<bool>,
 }

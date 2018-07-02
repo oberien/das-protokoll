@@ -8,8 +8,6 @@ extern crate futures;
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
 use tokio::timer::Delay;
-use tokio_io::codec::{Encoder, Decoder};
-use bytes::{Bytes, BytesMut};
 use futures::unsync::{mpsc, oneshot};
 use futures::future::{IntoFuture, Either};
 
@@ -21,41 +19,9 @@ use std::time::{Instant, Duration};
 mod frontend;
 mod blockdb;
 mod lel;
+mod codec;
 
 use lel::Lel::*;
-
-#[derive(Debug)]
-enum Msg {
-    TransferPayload,
-    TransferStatus,
-    RootUpdate,
-    RootUpdateResponse,
-    BlockRequest,
-    BlockRequestResponse,
-    // use Bytes for payload data
-}
-
-struct MyCodec;
-
-impl Decoder for MyCodec {
-    type Item = Msg;
-    type Error = std::io::Error;
-
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Msg>, Self::Error> {
-        unimplemented!();
-    }
-}
-
-impl Encoder for MyCodec {
-    type Item = Msg;
-    type Error = std::io::Error;
-
-    fn encode(&mut self, item: Self::Item, src: &mut BytesMut) -> Result<(), Self::Error> {
-        unimplemented!();
-    }
-}
-
-type Blkid = [u8; 32];
 
 #[derive(Default)]
 struct Client {
