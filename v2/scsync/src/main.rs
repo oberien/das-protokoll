@@ -7,6 +7,7 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_cbor;
 extern crate varmint;
+extern crate itertools;
 
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};

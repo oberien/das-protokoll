@@ -2,11 +2,14 @@ use std::io::Cursor;
 use std::iter;
 
 use tokio_io::codec::{Encoder, Decoder};
-use bytes::{Bytes, BytesMut};
+use bytes::{Bytes, BytesMut, BufMut};
 use serde_cbor;
-use varmint::{self, ReadVarInt};
+use varmint::{self, ReadVarInt, WriteVarInt};
+use itertools::Itertools;
 
 use blockdb::{BlockId, BlockRef, Key};
+
+pub const MTU: usize = 1460;
 
 pub struct MyCodec;
 
@@ -70,8 +73,40 @@ impl Encoder for MyCodec {
     type Item = Msg;
     type Error = ::std::io::Error;
 
-    fn encode(&mut self, item: Self::Item, src: &mut BytesMut) -> Result<(), Self::Error> {
-        unimplemented!();
+    fn encode(&mut self, item: Msg, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        // can't be more than MTU anyways
+        dst.reserve(MTU);
+        match item {
+            Msg::TransferPayload(payload) => {
+                let varint_len = varmint::len_u64_varint(payload.chunkid);
+                let len = 1 + varint_len + payload.data.len();
+                assert!(len <= MTU);
+                dst.put_u8(0);
+                dst.writer().write_u64_varint(payload.chunkid);
+                dst.extend_from_slice(&payload.data);
+            }
+            Msg::TransferStatus(status) => {
+                let mut written = 1;
+                dst.put_u8(1);
+                let varint_len = varmint::len_u64_varint(status.starting_from);
+                written += varint_len;
+                dst.writer().write_u64_varint(status.starting_from).unwrap();
+                for (_, group) in &status.bitmap.into_iter().group_by(|&x| x) {
+                    let run = group.count();
+                    let varint_len = varmint::len_usize_varint(run);
+                    if written + varint_len > MTU {
+                        break;
+                    }
+                    dst.writer().write_usize_varint(run);
+                    written += varint_len;
+                }
+            }
+            Msg::RootUpdate(update) => serde_cbor::to_writer(&mut dst.writer(), &update).unwrap(),
+            Msg::RootUpdateResponse(res) => serde_cbor::to_writer(&mut dst.writer(), &res).unwrap(),
+            Msg::BlockRequest(req) => serde_cbor::to_writer(&mut dst.writer(), &req).unwrap(),
+            Msg::BlockRequestResponse(res) => serde_cbor::to_writer(&mut dst.writer(), &res).unwrap(),
+        }
+        Ok(())
     }
 }
 
