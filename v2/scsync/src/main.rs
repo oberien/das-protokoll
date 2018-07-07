@@ -1,9 +1,12 @@
-#![allow(dead_code, unused_variables)]
-
 extern crate tokio;
 extern crate tokio_io;
 extern crate bytes;
 extern crate futures;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_cbor;
+extern crate varmint;
 
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
@@ -22,10 +25,12 @@ mod lel;
 mod codec;
 
 use lel::Lel::*;
+use codec::{Msg, MyCodec};
+use blockdb::BlockId;
 
 #[derive(Default)]
 struct Client {
-    pending_block_requests: HashMap<Blkid, oneshot::Sender<Msg>>,
+    pending_block_requests: HashMap<BlockId, oneshot::Sender<Msg>>,
 }
 
 fn request_retry<T, F, B>(rx: oneshot::Receiver<T>, mut f: F) -> impl Future<Item = T, Error = std::io::Error>
@@ -65,14 +70,14 @@ fn main() {
     let recv_task = rx.map(|(msg, addr)| {
         match clients.entry(addr.clone()) {
             Entry::Vacant(v) => match msg {
-                Msg::RootUpdate => {
+                Msg::RootUpdate(update) => {
                     let response = if true {
                         // nothing to do, just respond
-                        Msg::RootUpdateResponse
+                        Msg::RootUpdateResponse(unimplemented!())
                     } else {
                         // open connection
                         let client = v.insert(Client::default());
-                        Msg::RootUpdateResponse
+                        Msg::RootUpdateResponse(unimplemented!())
                     };
                     A(tx.clone().send((response, addr))
                         .map(|_sender| ()).map_err(|_| unreachable!()))
@@ -84,9 +89,9 @@ fn main() {
 
                 match msg {
                     // not sure how to handle root updates here??
-                    Msg::RootUpdate => C(future::ok(())),
+                    Msg::RootUpdate(update) => C(future::ok(())),
 
-                    Msg::RootUpdateResponse => {
+                    Msg::RootUpdateResponse(res) => {
                         if true {
                             // nothing to do
                             D(future::ok(()))
@@ -104,29 +109,27 @@ fn main() {
                             // however this requires cross-connection reasoning
 
                             E(
-                                request_retry(orx, move || tx.clone().send((Msg::BlockRequest, addr.clone())).map(|_| ()))
+                                request_retry(orx, move || tx.clone().send((Msg::BlockRequest(unimplemented!()), addr.clone())).map(|_| ()))
                                     .map(|msg| ())
                             )
                         }
                     }
-
-                    Msg::BlockRequestResponse => {
+                    Msg::BlockRequest(req) => {
+                        // do things, then send response
+                        G(tx.clone().send((Msg::BlockRequestResponse(unimplemented!()), addr))
+                            .map(|_sender| ()).map_err(|_| unreachable!()))
+                    }
+                    Msg::BlockRequestResponse(_) => {
                         if let Some(task) = client.pending_block_requests.remove(&[0; 32]) {
                             task.send(msg).unwrap();
                         }
                         F(future::ok(()))
                     }
-                    Msg::BlockRequest => {
-                        // do things, then send response
-                        G(tx.clone().send((Msg::BlockRequestResponse, addr))
-                            .map(|_sender| ()).map_err(|_| unreachable!()))
-                    },
-
-                    Msg::TransferPayload => {
+                    Msg::TransferPayload(payload) => {
                         // receive data
                         H(future::ok(()))
                     }
-                    Msg::TransferStatus => {
+                    Msg::TransferStatus(status) => {
                         // update transfer status
                         I(future::ok(()))
                     }

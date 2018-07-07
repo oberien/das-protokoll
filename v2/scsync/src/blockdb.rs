@@ -29,25 +29,46 @@ impl BlockDb {
     }
 
     pub fn add(&mut self, block: Block) {
-        self.blocks.entry(block.id).or_insert(block);
+        self.blocks.entry(block.id()).or_insert(block);
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BlockRef {
     pub blockid: BlockId,
     pub key: Key,
     pub hints: Vec<Hint>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Hint {
     pub blockref: BlockRef,
     pub offset: u64,
     pub length: u64,
 }
 
-pub struct Block {
+pub enum Block {
+    Partial(Partial),
+    Full(Full),
+}
+
+impl Block {
+    pub fn id(&self) -> BlockId {
+        match self {
+            Block::Partial(p) => p.id,
+            Block::Full(f) => f.id,
+        }
+    }
+}
+
+pub struct Partial {
     pub id: BlockId,
     pub data: Vec<u8>,
     /// one bool per byte
     pub available: Vec<bool>,
+}
+
+pub struct Full {
+    pub id: BlockId,
+    pub data: Vec<u8>,
 }
