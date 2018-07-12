@@ -1,4 +1,4 @@
-use std::fs::{self, FileType};
+use std::fs;
 use std::collections::HashMap;
 use std::path::Path;
 use std::io::Cursor;

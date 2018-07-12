@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 pub type BlockId = [u8; 32];
 pub type Key = [u8; 16];

@@ -82,7 +82,7 @@ impl Encoder for MyCodec {
                 let len = 1 + varint_len + payload.data.len();
                 assert!(len <= MTU);
                 dst.put_u8(0);
-                dst.writer().write_u64_varint(payload.chunkid);
+                dst.writer().write_u64_varint(payload.chunkid).unwrap();
                 dst.extend_from_slice(&payload.data);
             }
             Msg::TransferStatus(status) => {
@@ -97,7 +97,7 @@ impl Encoder for MyCodec {
                     if written + varint_len > MTU {
                         break;
                     }
-                    dst.writer().write_usize_varint(run);
+                    dst.writer().write_usize_varint(run).unwrap();
                     written += varint_len;
                 }
             }
