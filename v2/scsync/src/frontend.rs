@@ -1,12 +1,17 @@
 use std::fs::{self, FileType};
 use std::collections::HashMap;
 use std::path::Path;
+use std::io::Cursor;
 
+use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
 use serde_cbor;
+use tiny_keccak;
+use crypto::aessafe::{AesSafe128Encryptor, AesSafe128Decryptor};
+use rand::{Rng, OsRng};
+use aesstream::{AesWriter, AesReader};
 
 use blockdb::{Full, BlockRef, BlockDb, Block, Key};
-use tiny_keccak;
 
 #[derive(Debug)]
 pub struct Frontend {
@@ -32,9 +37,9 @@ impl Frontend {
 
             if file.file_type().is_file() {
                 let content = fs::read(file.path()).unwrap();
-                let block: Block = Leaf {
+                let (key, block) = Leaf {
                     data: content,
-                }.into();
+                }.to_block();
                 let parent = file.path().parent().unwrap().to_owned();
                 let child = Child {
                     name: file.path().file_name().unwrap().to_str().unwrap().to_string(),
@@ -42,8 +47,7 @@ impl Frontend {
                     _type: BlockType::Leaf,
                     blockref: BlockRef {
                         blockid: block.id(),
-                        // TODO
-                        key: Default::default(),
+                        key,
                         hints: Vec::new(),
                     },
                 };
@@ -52,14 +56,14 @@ impl Frontend {
             }
 
             if file.file_type().is_dir() {
-                let block: Block = Dir {
+                let (key, block) = Dir {
                     children: map.remove(file.path()).unwrap_or_default(),
-                }.into();
+                }.to_block();
                 let id = block.id();
                 blocks.insert(id, block);
 
                 if file.path() == folder {
-                    root = Some(BlockRef::new(id, Default::default(), Vec::new()));
+                    root = Some(BlockRef::new(id, key, Vec::new()));
                 }
             }
         }
@@ -73,22 +77,15 @@ pub struct Leaf {
     pub data: Vec<u8>,
 }
 
-impl<'a> From<&'a Full> for Leaf {
-    fn from(full: &'a Full) -> Self {
-        let data: Vec<u8> = serde_cbor::from_slice(&full.data).unwrap();
+impl Leaf {
+    fn from_full(full: &Full, key: Key) -> Self {
         Leaf {
-            data,
+            data: from_full(full, key),
         }
     }
-}
 
-impl Into<Block> for Leaf {
-    fn into(self) -> Block {
-        let data = serde_cbor::to_vec(&self.data).unwrap();
-        Block::Full(Full {
-            id: tiny_keccak::keccak256(&data),
-            data,
-        })
+    fn to_block(&self) -> (Key, Block) {
+        to_block(&self.data)
     }
 }
 
@@ -97,19 +94,13 @@ pub struct Meta {
     pub blocks: Vec<BlockRef>,
 }
 
-impl<'a> From<&'a Full> for Meta {
-    fn from(full: &'a Full) -> Self {
-        serde_cbor::from_slice(&full.data).unwrap()
+impl Meta {
+    fn from_full(full: &Full, key: Key) -> Self {
+        from_full(full, key)
     }
-}
 
-impl Into<Block> for Meta {
-    fn into(self) -> Block {
-        let data = serde_cbor::to_vec(&self).unwrap();
-        Block::Full(Full {
-            id: tiny_keccak::keccak256(&data),
-            data,
-        })
+    fn to_block(&self) -> (Key, Block) {
+        to_block(self)
     }
 }
 
@@ -118,19 +109,13 @@ pub struct Dir {
     pub children: Vec<Child>,
 }
 
-impl<'a> From<&'a Full> for Dir {
-    fn from(full: &'a Full) -> Self {
-        serde_cbor::from_slice(&full.data).unwrap()
+impl Dir {
+    fn from_full(full: &Full, key: Key) -> Self {
+        from_full(full, key)
     }
-}
 
-impl Into<Block> for Dir {
-    fn into(self) -> Block {
-        let data = serde_cbor::to_vec(&self).unwrap();
-        Block::Full(Full {
-            id: tiny_keccak::keccak256(&data),
-            data,
-        })
+    fn to_block(&self) -> (Key, Block) {
+        to_block(self)
     }
 }
 
@@ -149,4 +134,24 @@ pub enum BlockType {
     Directory = 1,
     FileMeta = 2,
     Leaf = 3,
+}
+
+fn from_full<T: Deserialize<'static>>(full: &Full, key: Key) -> T {
+    let decryptor = AesSafe128Decryptor::new(&key);
+    let reader = AesReader::new(Cursor::new(&full.data), decryptor).unwrap();
+    serde_cbor::from_reader(reader).unwrap()
+}
+
+fn to_block<T: Serialize>(t: &T) -> (Key, Block) {
+    let mut data = Vec::new();
+    let key: Key = OsRng::new().unwrap().gen();
+    let encryptor = AesSafe128Encryptor::new(&key);
+    {
+        let mut writer = AesWriter::new(&mut data, encryptor).unwrap();
+        serde_cbor::to_writer(&mut writer, t).unwrap();
+    }
+    (key, Block::Full(Full {
+        id: tiny_keccak::keccak256(&data),
+        data,
+    }))
 }

@@ -10,7 +10,9 @@ extern crate varmint;
 extern crate itertools;
 extern crate walkdir;
 extern crate tiny_keccak;
-
+extern crate crypto;
+extern crate rand;
+extern crate aesstream;
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
 use tokio::timer::Delay;
