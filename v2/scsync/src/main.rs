@@ -8,6 +8,8 @@ extern crate serde_derive;
 extern crate serde_cbor;
 extern crate varmint;
 extern crate itertools;
+extern crate walkdir;
+extern crate tiny_keccak;
 
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
@@ -28,6 +30,7 @@ mod codec;
 use lel::Lel::*;
 use codec::{Msg, MyCodec};
 use blockdb::BlockId;
+use frontend::Frontend;
 
 #[derive(Default)]
 struct Client {
@@ -49,6 +52,10 @@ fn request_retry<T, F, B>(rx: oneshot::Receiver<T>, mut f: F) -> impl Future<Ite
 }
 
 fn main() {
+    let frontend = Frontend::from_folder("foo");
+    println!("{:#x?}", frontend);
+    panic!("nyi");
+
     let mut clients = HashMap::new();
 
     let addr = "127.0.0.1:12345".parse().unwrap();

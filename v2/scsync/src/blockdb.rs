@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 pub type BlockId = [u8; 32];
 pub type Key = [u8; 16];
 
+#[derive(Debug)]
 pub struct BlockDb {
     /// Current official root
     root: BlockRef,
@@ -12,6 +14,14 @@ pub struct BlockDb {
 }
 
 impl BlockDb {
+    pub fn new(root: BlockRef, blocks: HashMap<BlockId, Block>) -> BlockDb {
+        BlockDb {
+            root,
+            pending_root: None,
+            blocks,
+        }
+    }
+
     pub fn root(&self) -> &BlockRef {
         &self.root
     }
@@ -40,6 +50,16 @@ pub struct BlockRef {
     pub hints: Vec<Hint>,
 }
 
+impl BlockRef {
+    pub fn new(blockid: BlockId, key: Key, hints: Vec<Hint>) -> BlockRef {
+        BlockRef {
+            blockid,
+            key,
+            hints,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Hint {
     pub blockref: BlockRef,
@@ -47,6 +67,7 @@ pub struct Hint {
     pub length: u64,
 }
 
+#[derive(Debug)]
 pub enum Block {
     Partial(Partial),
     Full(Full),
@@ -61,6 +82,7 @@ impl Block {
     }
 }
 
+#[derive(Debug)]
 pub struct Partial {
     pub id: BlockId,
     pub data: Vec<u8>,
@@ -68,6 +90,7 @@ pub struct Partial {
     pub available: Vec<bool>,
 }
 
+#[derive(Debug)]
 pub struct Full {
     pub id: BlockId,
     pub data: Vec<u8>,
