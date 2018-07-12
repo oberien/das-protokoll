@@ -79,6 +79,13 @@ impl Block {
             Block::Full(f) => f.id,
         }
     }
+
+    pub fn full(&self) -> &Full {
+        match self {
+            Block::Full(full) => full,
+            Block::Partial(_) => panic!("expected full block, got partial one")
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -56,6 +56,7 @@ fn request_retry<T, F, B>(rx: oneshot::Receiver<T>, mut f: F) -> impl Future<Ite
 fn main() {
     let frontend = Frontend::from_folder("foo");
     println!("{:#x?}", frontend);
+    frontend.write_to_dir("bar");
     panic!("nyi");
 
     let mut clients = HashMap::new();

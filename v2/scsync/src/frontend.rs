@@ -1,7 +1,7 @@
-use std::fs;
+use std::fs::{self, File};
 use std::collections::HashMap;
 use std::path::Path;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 
 use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
@@ -11,7 +11,7 @@ use crypto::aessafe::{AesSafe128Encryptor, AesSafe128Decryptor};
 use rand::{Rng, OsRng};
 use aesstream::{AesWriter, AesReader};
 
-use blockdb::{Full, BlockRef, BlockDb, Block, Key};
+use blockdb::{Full, BlockRef, BlockDb, Block, Key, Hint};
 
 #[derive(Debug)]
 pub struct Frontend {
@@ -71,6 +71,48 @@ impl Frontend {
             blockdb: BlockDb::new(root.unwrap(), blocks)
         }
     }
+
+    pub fn write_to_dir<P: AsRef<Path>>(&self, folder: P) {
+        // clear folder
+        let folder = folder.as_ref();
+        fs::remove_dir_all(folder).unwrap();
+        fs::create_dir(folder).unwrap();
+        let BlockRef { blockid, key, .. } = *self.blockdb.root();
+        let dir = Dir::from_full(self.blockdb.get(blockid).full(), &key);
+        self.write_to_dir_rec(folder, dir);
+    }
+
+    fn write_to_dir_rec<P: AsRef<Path>>(&self, folder: P, dir: Dir) {
+        let folder = folder.as_ref();
+//        pub name: String,
+//        pub metadata: (),
+//        #[serde(rename = "type")]
+//        pub _type: BlockType,
+//        pub blockref: BlockRef,
+        for Child { name, _type, blockref: BlockRef { blockid, key, .. }, .. } in dir.children {
+            let path = folder.join(name);
+            match _type {
+                BlockType::Leaf => {
+                    let mut file = File::create(path).unwrap();
+                    let leaf = Leaf::from_full(self.blockdb.get(blockid).full(), &key);
+                    file.write_all(&leaf.data).unwrap();
+                }
+                BlockType::Directory => {
+                    fs::create_dir(&path).unwrap();
+                    let dir = Dir::from_full(self.blockdb.get(blockid).full(), &key);
+                    self.write_to_dir_rec(path, dir);
+                }
+                BlockType::FileMeta => {
+                    let mut file = File::create(path).unwrap();
+                    let meta = Meta::from_full(self.blockdb.get(blockid).full(), &key);
+                    for Hint { blockref: BlockRef { blockid, key, .. }, offset, length } in meta.blocks {
+                        let leaf = Leaf::from_full(self.blockdb.get(blockid).full(), &key);
+                        file.write_all(&leaf.data[offset as usize..offset as usize + length as usize]).unwrap();
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub struct Leaf {
@@ -78,7 +120,7 @@ pub struct Leaf {
 }
 
 impl Leaf {
-    fn from_full(full: &Full, key: Key) -> Self {
+    fn from_full(full: &Full, key: &Key) -> Self {
         Leaf {
             data: from_full(full, key),
         }
@@ -91,11 +133,11 @@ impl Leaf {
 
 #[derive(Serialize, Deserialize)]
 pub struct Meta {
-    pub blocks: Vec<BlockRef>,
+    pub blocks: Vec<Hint>,
 }
 
 impl Meta {
-    fn from_full(full: &Full, key: Key) -> Self {
+    fn from_full(full: &Full, key: &Key) -> Self {
         from_full(full, key)
     }
 
@@ -110,7 +152,7 @@ pub struct Dir {
 }
 
 impl Dir {
-    fn from_full(full: &Full, key: Key) -> Self {
+    fn from_full(full: &Full, key: &Key) -> Self {
         from_full(full, key)
     }
 
@@ -136,8 +178,8 @@ pub enum BlockType {
     Leaf = 3,
 }
 
-fn from_full<T: Deserialize<'static>>(full: &Full, key: Key) -> T {
-    let decryptor = AesSafe128Decryptor::new(&key);
+fn from_full<T: Deserialize<'static>>(full: &Full, key: &Key) -> T {
+    let decryptor = AesSafe128Decryptor::new(key);
     let reader = AesReader::new(Cursor::new(&full.data), decryptor).unwrap();
     serde_cbor::from_reader(reader).unwrap()
 }
