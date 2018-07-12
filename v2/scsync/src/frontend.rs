@@ -11,7 +11,7 @@ use crypto::aessafe::{AesSafe128Encryptor, AesSafe128Decryptor};
 use rand::{Rng, OsRng};
 use aesstream::{AesWriter, AesReader};
 
-use blockdb::{Full, BlockRef, BlockDb, Block, Key, Hint};
+use blockdb::{Full, BlockRef, BlockDb, Block, Key};
 
 #[derive(Debug)]
 pub struct Frontend {
@@ -100,9 +100,9 @@ impl Frontend {
                 BlockType::FileMeta => {
                     let mut file = File::create(path).unwrap();
                     let meta = Meta::from_full(self.blockdb.get(blockid).full(), &key);
-                    for Hint { blockref: BlockRef { blockid, key, .. }, offset, length } in meta.blocks {
+                    for BlockRef { blockid, key, .. } in meta.blocks {
                         let leaf = Leaf::from_full(self.blockdb.get(blockid).full(), &key);
-                        file.write_all(&leaf.data[offset as usize..offset as usize + length as usize]).unwrap();
+                        file.write_all(&leaf.data).unwrap();
                     }
                 }
             }
@@ -130,7 +130,7 @@ impl Leaf {
 
 #[derive(Serialize, Deserialize)]
 pub struct Meta {
-    pub blocks: Vec<Hint>,
+    pub blocks: Vec<BlockRef>,
 }
 
 impl Meta {
