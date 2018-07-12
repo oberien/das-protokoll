@@ -84,11 +84,6 @@ impl Frontend {
 
     fn write_to_dir_rec<P: AsRef<Path>>(&self, folder: P, dir: Dir) {
         let folder = folder.as_ref();
-//        pub name: String,
-//        pub metadata: (),
-//        #[serde(rename = "type")]
-//        pub _type: BlockType,
-//        pub blockref: BlockRef,
         for Child { name, _type, blockref: BlockRef { blockid, key, .. }, .. } in dir.children {
             let path = folder.join(name);
             match _type {
@@ -113,6 +108,8 @@ impl Frontend {
             }
         }
     }
+
+    // TODO: inotify with diff
 }
 
 pub struct Leaf {
