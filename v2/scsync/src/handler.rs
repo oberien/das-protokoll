@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::io;
 use std::time::{Instant, Duration};
 
-use futures::{Future, IntoFuture};
+use futures::{Future, IntoFuture, Sink};
 use futures::future::{self, Either};
 
 use blockdb::{BlockDb, BlockId};
@@ -46,11 +46,9 @@ impl<'a> Handler<'a> {
         }
     }
 
-    fn client(&self, addr: &SocketAddr) -> &mut Client {
-        self.clients.borrow_mut().get_mut(&addr).unwrap()
-    }
-
-    pub fn unconnected_root_update(&self, addr: SocketAddr, update: RootUpdate) -> impl Future {
+    pub fn unconnected_root_update(&self, addr: SocketAddr, update: RootUpdate) -> impl Future<Item = (), Error = io::Error> {
+        let mut r = self.clients.borrow_mut();
+        let client = r.get_mut(&addr).unwrap();
         let response = if update.to_blockref.blockid == self.blockdb.borrow().root().blockid {
             // nothing to do, just respond
             let blockid = self.blockdb.borrow().root().blockid;
@@ -62,7 +60,7 @@ impl<'a> Handler<'a> {
             })
         } else {
             // open connection
-            let client = self.clients.borrow_mut().insert(addr, Client::default());
+            self.clients.borrow_mut().insert(addr, Client::default());
             // TODO: traverse tree, request packets
             unimplemented!()
         };
@@ -70,14 +68,16 @@ impl<'a> Handler<'a> {
             .map(|_sender| ()).map_err(|_| unreachable!())
     }
 
-    pub fn needs_update(&self, res: RootUpdateResponse) -> bool {
+    pub fn needs_update(&self, res: &RootUpdateResponse) -> bool {
         self.blockdb.borrow().root().blockid != res.to_blockid
     }
 
-    pub fn root_update_response(&self, addr: SocketAddr, res: RootUpdateResponse) -> impl Future {
+    pub fn root_update_response(&self, addr: SocketAddr, res: RootUpdateResponse) -> impl Future<Item = (), Error = io::Error> {
+        let mut r = self.clients.borrow_mut();
+        let client = r.get_mut(&addr).unwrap();
         // prepare to receive a block request response, then send one out
         let (otx, orx) = oneshot::channel();
-        self.client(&addr).pending_block_requests.insert([0; 32], otx);
+        client.pending_block_requests.insert([0; 32], otx);
         // todo: be "smart" about concurrency
         // consider: A-B, A-C, B-D, C-D
         // an update from A goes to B and C perhaps simultaneously,
@@ -86,17 +86,22 @@ impl<'a> Handler<'a> {
         // however this requires cross-connection reasoning
 
         let tx = self.tx.clone();
-        request_retry(orx, move || tx.send((Msg::BlockRequest(unimplemented!()), addr.clone())).map(|_| ()))
-            .map(|msg| ())
+        request_retry(orx, move || {
+            (&tx).clone().send((Msg::BlockRequest(unimplemented!()), addr.clone()))
+                .map(|_| ())
+        }).map(|msg| ())
     }
 
-    pub fn block_request(&self, addr: SocketAddr, req: BlockRequest) -> impl Future {
+    pub fn block_request(&self, addr: SocketAddr, req: BlockRequest) -> impl Future<Item = (), Error = io::Error> {
         self.tx.clone().send((Msg::BlockRequestResponse(unimplemented!()), addr))
             .map(|_sender| ()).map_err(|_| unreachable!())
     }
 
     pub fn block_request_response(&self, addr: SocketAddr, res: BlockRequestResponse) {
-        if let Some(task) = self.client(&addr).pending_block_requests.remove(&[0; 32]) {
+        let mut r = self.clients.borrow_mut();
+        let client = r.get_mut(&addr).unwrap();
+
+        if let Some(task) = client.pending_block_requests.remove(&[0; 32]) {
             task.send(Msg::BlockRequestResponse(res)).unwrap();
         }
     }

@@ -76,7 +76,7 @@ fn main() {
                     // TODO: not sure how to handle root updates here??
                     Msg::RootUpdate(update) => A(future::ok(())),
                     Msg::RootUpdateResponse(res) => {
-                        if !handler.needs_update(res) {
+                        if !handler.needs_update(&res) {
                             // nothing to do
                             A(future::ok(()))
                         } else {
