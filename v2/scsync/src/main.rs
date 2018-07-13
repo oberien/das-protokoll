@@ -16,25 +16,17 @@ extern crate aesstream;
 
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
-use tokio::timer::Delay;
-use futures::unsync::{mpsc, oneshot};
-use futures::future::IntoFuture;
+use futures::unsync::mpsc;
 use futures::future::Either::*;
 
 use std::usize;
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
-use std::time::{Instant, Duration};
-use std::rc::Rc;
-use std::cell::RefCell;
 
 mod frontend;
 mod blockdb;
 mod codec;
 mod handler;
 
-use codec::{Msg, MyCodec, RootUpdateResponse};
-use blockdb::{BlockId, BlockDb};
+use codec::{Msg, MyCodec};
 use frontend::Frontend;
 use handler::{Handler, ClientState};
 
@@ -52,7 +44,7 @@ fn main() {
     let (utx, rx) = framed.split();
     let (tx, crx) = mpsc::channel(1); // would like this to be 0 but impossibruh
 
-    let mut handler = Handler::new(blockdb, &tx);
+    let handler = Handler::new(blockdb, &tx);
 
     // omfg give bang type already !!!!!!!!
     let crx = crx.map_err(|()| None.unwrap());
