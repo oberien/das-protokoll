@@ -17,7 +17,8 @@ use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
 use tokio::timer::Delay;
 use futures::unsync::{mpsc, oneshot};
-use futures::future::{IntoFuture, Either};
+use futures::future::IntoFuture;
+use futures::future::Either::*;
 
 use std::usize;
 use std::collections::HashMap;
@@ -26,11 +27,10 @@ use std::time::{Instant, Duration};
 
 mod frontend;
 mod blockdb;
-mod lel;
 mod codec;
 
-use lel::Lel::*;
 use codec::{Msg, MyCodec, RootUpdateResponse};
+
 use blockdb::BlockId;
 use frontend::Frontend;
 
@@ -46,8 +46,8 @@ fn request_retry<T, F, B>(rx: oneshot::Receiver<T>, mut f: F) -> impl Future<Ite
             .map_err(|_| unimplemented!())
             .and_then(move |()| rx.select2(Delay::new(Instant::now() + Duration::from_secs(1))))
             .map(|x| match x {
-                Either::A((response, _delay)) => future::Loop::Break(response),
-                Either::B(((), orx)) => future::Loop::Continue(orx),
+                A((response, _delay)) => future::Loop::Break(response),
+                B(((), orx)) => future::Loop::Continue(orx),
             })
             .map_err(|_| None.unwrap())
     })
@@ -81,7 +81,7 @@ fn main() {
 
     let recv_task = rx.map(|(msg, addr)| {
         match clients.entry(addr.clone()) {
-            Entry::Vacant(v) => match msg {
+            Entry::Vacant(v) => A(match msg {
                 Msg::RootUpdate(update) => {
                     let response = if update.to_blockref.blockid == blockdb.root().blockid {
                         // nothing to do, just respond
@@ -100,18 +100,18 @@ fn main() {
                         .map(|_sender| ()).map_err(|_| unreachable!()))
                 },
                 _ => B(future::ok(())), // ignore all other messages from a node we don't know
-            },
-            Entry::Occupied(mut o) => {
+            }),
+            Entry::Occupied(mut o) => B({
                 let client = o.get_mut();
 
                 match msg {
                     // not sure how to handle root updates here??
-                    Msg::RootUpdate(update) => C(future::ok(())),
+                    Msg::RootUpdate(update) => A(future::ok(())),
 
                     Msg::RootUpdateResponse(res) => {
                         if true {
                             // nothing to do
-                            D(future::ok(()))
+                            A(future::ok(()))
                         } else {
                             // we need to update
 
@@ -125,41 +125,41 @@ fn main() {
                             // ideally D would receive half of the blocks from B and the other half from C
                             // however this requires cross-connection reasoning
 
-                            E(
+                            B(A(
                                 request_retry(orx, move || tx.clone().send((Msg::BlockRequest(unimplemented!()), addr.clone())).map(|_| ()))
                                     .map(|msg| ())
-                            )
+                            ))
                         }
                     }
                     Msg::BlockRequest(req) => {
                         // do things, then send response
-                        G(tx.clone().send((Msg::BlockRequestResponse(unimplemented!()), addr))
-                            .map(|_sender| ()).map_err(|_| unreachable!()))
+                        B(B(tx.clone().send((Msg::BlockRequestResponse(unimplemented!()), addr))
+                            .map(|_sender| ()).map_err(|_| unreachable!())))
                     }
                     Msg::BlockRequestResponse(_) => {
                         if let Some(task) = client.pending_block_requests.remove(&[0; 32]) {
                             task.send(msg).unwrap();
                         }
-                        F(future::ok(()))
+                        A(future::ok(()))
                     }
                     Msg::TransferPayload(payload) => {
                         // receive data
-                        H(future::ok(()))
+                        A(future::ok(()))
                     }
                     Msg::TransferStatus(status) => {
                         // update transfer status
-                        I(future::ok(()))
+                        A(future::ok(()))
                     }
                 }
-            }
+            }),
         }
 
     }).buffer_unordered(usize::MAX).for_each(|()| Ok(()));
 
 
     let app = future::join_all(vec![
-        Either::A(send_task),
-        Either::B(recv_task),
+        A(send_task),
+        B(recv_task),
     ]);
 
     let res: std::io::Result<_> = tokio::executor::current_thread::block_on_all(app);
