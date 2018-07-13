@@ -19,6 +19,24 @@ pub struct Frontend {
 }
 
 impl Frontend {
+    pub fn into_inner(self) -> BlockDb {
+        self.blockdb
+    }
+
+    pub fn get_ref(&self) -> &BlockDb {
+        &self.blockdb
+    }
+
+    pub fn get_mut(&mut self) -> &mut BlockDb {
+        &mut self.blockdb
+    }
+
+    pub fn from_blockdb(blockdb: BlockDb) -> Frontend {
+        Frontend {
+            blockdb,
+        }
+    }
+
     pub fn from_folder<P: AsRef<Path>>(folder: P) -> Frontend {
         let folder = folder.as_ref();
         assert!(folder.is_dir(), "root is not a folder");

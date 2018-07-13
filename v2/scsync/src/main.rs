@@ -30,7 +30,7 @@ mod lel;
 mod codec;
 
 use lel::Lel::*;
-use codec::{Msg, MyCodec};
+use codec::{Msg, MyCodec, RootUpdateResponse};
 use blockdb::BlockId;
 use frontend::Frontend;
 
@@ -58,6 +58,7 @@ fn main() {
     println!("{:#x?}", frontend);
     frontend.write_to_dir("bar");
     panic!("nyi");
+    let blockdb = frontend.into_inner();
 
     let mut clients = HashMap::new();
 
@@ -82,13 +83,18 @@ fn main() {
         match clients.entry(addr.clone()) {
             Entry::Vacant(v) => match msg {
                 Msg::RootUpdate(update) => {
-                    let response = if true {
+                    let response = if update.to_blockref.blockid == blockdb.root().blockid {
                         // nothing to do, just respond
-                        Msg::RootUpdateResponse(unimplemented!())
+                        Msg::RootUpdateResponse(RootUpdateResponse {
+                            from_blockid: blockdb.root().blockid,
+                            to_blockid: blockdb.root().blockid,
+                            to_key: blockdb.root().key,
+                        })
                     } else {
                         // open connection
                         let client = v.insert(Client::default());
-                        Msg::RootUpdateResponse(unimplemented!())
+                        // TODO: traverse tree, request packets
+                        unimplemented!()
                     };
                     A(tx.clone().send((response, addr))
                         .map(|_sender| ()).map_err(|_| unreachable!()))
@@ -160,3 +166,4 @@ fn main() {
 
     println!("{:?}", res);
 }
+

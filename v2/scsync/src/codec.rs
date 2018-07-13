@@ -123,38 +123,38 @@ pub enum Msg {
 
 #[derive(Debug)]
 pub struct TransferPayload {
-    chunkid: u64,
-    data: Bytes,
+    pub chunkid: u64,
+    pub data: Bytes,
 }
 
 #[derive(Debug)]
 pub struct TransferStatus {
-    bitmap: Vec<bool>,
-    starting_from: u64,
+    pub bitmap: Vec<bool>,
+    pub starting_from: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RootUpdate {
-    nonce: [u8; 12],
-    from_blockid: BlockId,
-    to_blockref: BlockRef,
+    pub nonce: [u8; 12],
+    pub from_blockid: BlockId,
+    pub to_blockref: BlockRef,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RootUpdateResponse {
-    from_blockid: BlockId,
-    to_blockid: BlockId,
-    to_key: Key,
+    pub from_blockid: BlockId,
+    pub to_blockid: BlockId,
+    pub to_key: Key,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlockRequest {
-    blockid: BlockId,
+    pub blockid: BlockId,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlockRequestResponse {
-    blockid: BlockId,
-    start_id: u64,
-    end_id: u64,
+    pub blockid: BlockId,
+    pub start_id: u64,
+    pub end_id: u64,
 }
