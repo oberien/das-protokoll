@@ -86,6 +86,13 @@ impl Block {
             Block::Partial(_) => panic!("expected full block, got partial one")
         }
     }
+
+    pub fn len(&self) -> u64 {
+        match self {
+            Block::Full(f) => f.data.len() as u64,
+            Block::Partial(p) => p.data.len() as u64,
+        }
+    }
 }
 
 #[derive(Debug)]

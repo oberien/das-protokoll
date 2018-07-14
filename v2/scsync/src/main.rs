@@ -26,6 +26,8 @@ mod blockdb;
 mod codec;
 mod handler;
 
+use std::time::Duration;
+
 use codec::{Msg, MyCodec};
 use frontend::Frontend;
 use handler::{Handler, ClientState};
@@ -44,7 +46,7 @@ fn main() {
     let (utx, rx) = framed.split();
     let (tx, crx) = mpsc::channel(1); // would like this to be 0 but impossibruh
 
-    let handler = Handler::new(blockdb, &tx);
+    let handler = Handler::new(Duration::from_secs(1)/*todo*/, blockdb, &tx);
 
     // omfg give bang type already !!!!!!!!
     let crx = crx.map_err(|()| None.unwrap());
@@ -73,7 +75,7 @@ fn main() {
                             A(future::ok(()))
                         } else {
                             // we need to update
-                            B(A(handler.root_update_response(addr, res)))
+                            B(A(A(handler.root_update_response(addr, res))))
                         }
                     }
                     Msg::BlockRequest(req) => {
@@ -91,8 +93,7 @@ fn main() {
                     }
                     Msg::TransferStatus(status) => {
                         // update transfer status
-                        handler.transfer_status(addr, status);
-                        A(future::ok(()))
+                        B(A(B(handler.transfer_status(addr, status))))
                     }
                 }
             }),

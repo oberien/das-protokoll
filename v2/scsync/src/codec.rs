@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::io::ErrorKind;
 use std::iter;
 
 use tokio_io::codec::{Encoder, Decoder};
@@ -37,28 +38,7 @@ impl Decoder for MyCodec {
                 }
             }),
             1 => Msg::TransferStatus({
-                let starting_from = buf.read_u64_varint().unwrap();
-                let sum: u64 = iter::repeat(())
-                    .map(|()| buf.read_u64_varint().ok())
-                    .take_while(|x| x.is_some())
-                    .map(|o| o.unwrap())
-                    .sum();
-                let mut vec = Vec::with_capacity(sum as usize);
-                buf.set_position(0);
-                let iter = iter::repeat(())
-                    .map(|()| buf.read_u64_varint().ok())
-                    .skip(1)
-                    .take_while(|x| x.is_some())
-                    .map(|o| o.unwrap());
-                for (i, num) in iter.enumerate() {
-                    for _ in 0..num {
-                        vec.push(i % 2 == 0);
-                    }
-                }
-                TransferStatus {
-                    bitmap: vec,
-                    starting_from,
-                }
+                TransferStatus { missing_ranges: VarintIter(buf).scan(0, |a, x| { *a += x; Some(*a) }).tuples().collect() }
             }),
             2 => Msg::RootUpdate(serde_cbor::from_reader(buf).unwrap()),
             3 => Msg::RootUpdateResponse(serde_cbor::from_reader(buf).unwrap()),
@@ -68,6 +48,27 @@ impl Decoder for MyCodec {
         }))
     }
 }
+
+pub struct VarintIter<T: AsRef<[u8]>>(Cursor<T>);
+
+impl<T: AsRef<[u8]>> VarintIter<T> {
+    pub fn new(t: T) -> VarintIter<T> {
+        VarintIter(Cursor::new(t))
+    }
+}
+
+impl<T: AsRef<[u8]>> Iterator for VarintIter<T> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<u64> {
+        match self.0.read_u64_varint() {
+            Ok(x) => Some(x),
+            Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => None,
+            Err(e) => panic!("unexpected read error {:?}", e),
+        }
+    }
+}
+
 
 impl Encoder for MyCodec {
     type Item = Msg;
@@ -86,20 +87,13 @@ impl Encoder for MyCodec {
                 dst.extend_from_slice(&payload.data);
             }
             Msg::TransferStatus(status) => {
-                let mut written = 1;
+                use std::iter::once;
                 dst.put_u8(1);
-                let varint_len = varmint::len_u64_varint(status.starting_from);
-                written += varint_len;
-                dst.writer().write_u64_varint(status.starting_from).unwrap();
-                for (_, group) in &status.bitmap.into_iter().group_by(|&x| x) {
-                    let run = group.count();
-                    let varint_len = varmint::len_usize_varint(run);
-                    if written + varint_len > MTU {
-                        break;
-                    }
-                    dst.writer().write_usize_varint(run).unwrap();
-                    written += varint_len;
+                for value in status.missing_ranges.into_iter().flat_map(|(from, to)| once(from).chain(once(to)))
+                    .scan(0, |a, mut x| { x -= *a; *a += x; Some(x) }) {
+                    dst.writer().write_u64_varint(value)?;
                 }
+                dst.truncate(MTU);
             }
             Msg::RootUpdate(update) => serde_cbor::to_writer(&mut dst.writer(), &update).unwrap(),
             Msg::RootUpdateResponse(res) => serde_cbor::to_writer(&mut dst.writer(), &res).unwrap(),
@@ -129,8 +123,7 @@ pub struct TransferPayload {
 
 #[derive(Debug)]
 pub struct TransferStatus {
-    pub bitmap: Vec<bool>,
-    pub starting_from: u64,
+    pub missing_ranges: Vec<(u64, u64)>, // from, to
 }
 
 #[derive(Debug, Serialize, Deserialize)]
