@@ -45,7 +45,7 @@ fn traverse_rec<T, V: Visitor<T>>(blockdb: &BlockDb, path: PathBuf, bref: &Block
                     }
                     continue;
                 }
-                let block = blockdb.get(bref.blockid);
+                let block = blockdb.get(blockref.blockid);
                 if let Block::Partial(partial) = block {
                     if let Some(t) = visitor.visit_partial(&path, partial) {
                         return Some(t);
@@ -55,7 +55,6 @@ fn traverse_rec<T, V: Visitor<T>>(blockdb: &BlockDb, path: PathBuf, bref: &Block
 
                 let full = block.full();
                 let path = path.join(name);
-                error!("PATH {}, type: {:?}", path.display(), _type);
                 let dec = match _type {
                     BlockType::Directory => Decoded::Dir(Dir::from_full(full, &blockref.key).unwrap()),
                     BlockType::FileMeta => Decoded::Meta(Meta::from_full(full, &blockref.key).unwrap()),

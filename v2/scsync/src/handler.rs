@@ -338,7 +338,6 @@ impl<'a> Handler<'a> {
         }
 
         let dec = frontend::resolve(&*blockdb, transfer.blockid, true);
-        println!("{:?}", dec);
         // TODO: check if block is valid
         match dec {
             Decoded::Dir(dir) => for child in dir.children {
