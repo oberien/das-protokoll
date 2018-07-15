@@ -7,6 +7,7 @@ Implemented:
 * Convert directory into blockdb
 * Convert blockdb to directory (write tree beginning from root into directory)
 * Upload of whole directory tree from Client to Server
+* BlockDB Crypto
 
 Missing:
 
@@ -22,6 +23,7 @@ Missing:
 * Inotify / diffing (shouldn't be more than 20 lines with `inotify` and `diff` crate )
 * Verification that blockid is valid hash of block
 * Proper error handling (currently crash on any unexpected message)
+* Resending of RootUpdate (currently only BlockRequests are resent)
 
 Notes:
 
@@ -36,13 +38,51 @@ Possible Modifications:
 
 # How to run
 
-TODO
+Install Rust+Cargo: https://www.rust-lang.org/
+
+Inside the `scsync` directory, invoke `cargo build`.
+This compiles a binary to `./target/debug/scsync`.
+This is our `scsync` client, test this.
+`scsync --help` shows the help of the program.
+
+A pre-built binary built for linux is included.
+
+Logging can be enabled by passing the environment variable
+`RUST_LOG=csync=trace`, other log levels aren't used.
+
+On successful termination of everything, both the server and client will hang, doing nothing.
+The server will print `done` before hanging.
+
+## Example execution
+
+Setup files:
+
+```sh
+mkdir source
+touch source/foo
+mkdir source/bar
+dd if=/dev/zero of=source/bar/baz bs=1024 count=1024
+mkdir destination
+```
+
+Start Server:
+
+```sh
+RUST_BACKTRACE=1 cargo run -- -c 100000000 -f bar -s
+```
+
+Start Client:
+
+```sh
+RUST_BACKTRACE=1 cargo run -- -c 10000000 -f foo
+```
 
 # Issues during Implementation
 
 We needed to reimplement large parts of v1 of das PROTOKOLL, because we applied a different project structure.
-
-TODO
+The current state of async in rust sucks, we want async/await and a proper tokio.
+We wanted to have a single-threaded task executor, but unfortunately the tokio-timer crate doesn't work with it.
+Thus, we needed to switch to a multithreaded executor after having implemented everything.
 
 # Spec Changes during Implementation
 

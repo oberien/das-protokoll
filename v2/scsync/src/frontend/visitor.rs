@@ -106,7 +106,8 @@ impl Visitor<Decoded> for ResolveBlockVisitor {
     }
 
     fn visit_partial<P: AsRef<Path>>(&mut self, _path: P, _block: &Partial) -> Option<Decoded> {
-        unreachable!()
+        // ignore
+        None
     }
 
     fn visit_missing<P: AsRef<Path>>(&mut self, _path: P, _blockid: [u8; 32]) -> Option<Decoded> {

@@ -320,7 +320,7 @@ impl<'a> Handler<'a> {
             let id = (chunk.chunkid - transfer.id_range.start) as usize;
             trace!("id within transfer: {}", id);
             let from = id * CHUNK_SIZE;
-            let to = cmp::min((id + 1) * CHUNK_SIZE, chunk.data.len());
+            let to = from + cmp::min(CHUNK_SIZE, chunk.data.len());
             partial.data[from..to].copy_from_slice(&chunk.data);
             partial.available[id] = true;
         }
@@ -374,6 +374,7 @@ impl<'a> Handler<'a> {
             tokio::spawn(req);
         }
         clients.remove(&addr);
+        println!("done");
     }
 
     pub fn transfer_status(&self, addr: SocketAddr, status: TransferStatus) -> impl Future<Item = (), Error = io::Error> {

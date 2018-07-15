@@ -8,6 +8,9 @@ use walkdir::WalkDir;
 use serde_cbor::{self, error::Result};
 use tiny_keccak;
 use crypto::aessafe::{AesSafe128Encryptor, AesSafe128Decryptor};
+use crypto::util;
+use crypto::aesni::{AesNiEncryptor, AesNiDecryptor};
+use crypto::aes::KeySize;
 use rand::{Rng, OsRng};
 use aesstream::{AesWriter, AesReader};
 
@@ -143,7 +146,7 @@ impl Leaf {
     }
 
     fn to_block(&self) -> (Key, Block) {
-        to_block(&self.data)
+        to_block(&self.data, self.data.len() + 100)
     }
 }
 
@@ -159,7 +162,7 @@ impl Meta {
 
     #[allow(unused)]
     fn to_block(&self) -> (Key, Block) {
-        to_block(self)
+        to_block(self, self.blocks.len() * 200)
     }
 }
 
@@ -174,7 +177,7 @@ impl Dir {
     }
 
     fn to_block(&self) -> (Key, Block) {
-        to_block(self)
+        to_block(self, self.children.len() * 1024)
     }
 }
 
@@ -221,19 +224,35 @@ pub fn verify(blockdb: &BlockDb, pending: bool) -> bool {
 }
 
 fn from_full<T: Deserialize<'static>>(full: &Full, key: &Key) -> Result<T> {
-    let decryptor = AesSafe128Decryptor::new(key);
-    let reader = AesReader::new(Cursor::new(&full.data), decryptor).unwrap();
-    serde_cbor::from_reader(reader)
+    trace!("start decryption: {:?}", full.id);
+    let enc = if util::supports_aesni() {
+        let decryptor = AesNiDecryptor::new(KeySize::KeySize128, key);
+        let reader = AesReader::new(Cursor::new(&full.data), decryptor).unwrap();
+        serde_cbor::from_reader(reader)
+    } else {
+        let decryptor = AesSafe128Decryptor::new(key);
+        let reader = AesReader::new(Cursor::new(&full.data), decryptor).unwrap();
+        serde_cbor::from_reader(reader)
+    };
+    trace!("end decryption: {:?}", full.id);
+    enc
 }
 
-fn to_block<T: Serialize>(t: &T) -> (Key, Block) {
-    let mut data = Vec::new();
+fn to_block<T: Serialize>(t: &T, cap_hint: usize) -> (Key, Block) {
+    let mut data = Vec::with_capacity(cap_hint);
     let key: Key = OsRng::new().unwrap().gen();
-    let encryptor = AesSafe128Encryptor::new(&key);
-    {
+
+    trace!("start encryption");
+    if util::supports_aesni() {
+        let encryptor = AesNiEncryptor::new(KeySize::KeySize128, &key);
+        let mut writer = AesWriter::new(&mut data, encryptor).unwrap();
+        serde_cbor::to_writer(&mut writer, t).unwrap();
+    } else {
+        let encryptor = AesSafe128Encryptor::new(&key);
         let mut writer = AesWriter::new(&mut data, encryptor).unwrap();
         serde_cbor::to_writer(&mut writer, t).unwrap();
     }
+    trace!("end encryption");
     (key, Block::Full(Full {
         id: tiny_keccak::keccak256(&data),
         data,
