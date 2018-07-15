@@ -13,6 +13,29 @@ extern crate tiny_keccak;
 extern crate crypto;
 extern crate rand;
 extern crate aesstream;
+#[macro_use]
+extern crate structopt;
+
+use structopt::StructOpt;
+
+#[derive(StructOpt)]
+#[structopt(name = "scsync", about = "Secure (tm) Cloud Sync")]
+pub struct Opt {
+    /// Server Mode
+    #[structopt(short = "s", long = "server")]
+    server: bool,
+    /// Port to connect to
+    #[structopt(short = "p", long = "port", default_value = "21088")]
+    port: u16,
+    /// Remote host
+    #[structopt(short = "h", long = "host", default_value = "localhost")]
+    host: String,
+    /// Directory to upload files from
+    #[structopt(short = "f", long = "files")]
+    files: String,
+    #[structopt(short = "cc", long = "packet-rate")]
+    pps: u32,
+}
 
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
@@ -20,6 +43,7 @@ use futures::unsync::mpsc;
 use futures::future::Either::*;
 
 use std::usize;
+use std::net::SocketAddr;
 
 mod frontend;
 mod blockdb;
@@ -33,13 +57,14 @@ use frontend::Frontend;
 use handler::{Handler, ClientState};
 
 fn main() {
-    // argparse
-    let server_addr = Some("127.0.0.1:12346"); // server has None here
-    let pps = 1000;
+    let opt = Opt::from_args();
+    let server_addr = if opt.server {
+        None
+    } else {
+        Some(SocketAddr::new(opt.host.parse().unwrap(), opt.port))
+    };
 
-    let frontend = Frontend::from_folder("foo");
-    println!("{:#x?}", frontend);
-    frontend.write_to_dir("bar");
+    let frontend = Frontend::from_folder(opt.files);
 
     let blockdb = frontend.into_inner();
 
@@ -50,11 +75,11 @@ fn main() {
     let (utx, rx) = framed.split();
     let (tx, crx) = mpsc::channel(1); // would like this to be 0 but impossibruh
 
-    let handler = Handler::new(Duration::from_secs(1) / pps, blockdb, &tx);
+    let handler = Handler::new(Duration::from_secs(1) / opt.pps, blockdb, &tx);
 
     let init_task = match server_addr {
         None => A(future::ok(())), // nothing to do for servers
-        Some(srv) => B(handler.connect(srv.parse().unwrap())),
+        Some(srv) => B(handler.connect(srv)),
     };
 
     // omfg give bang type already !!!!!!!!
