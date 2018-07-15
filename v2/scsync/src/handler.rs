@@ -1,3 +1,4 @@
+use std::ops::RangeInclusive;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -5,15 +6,22 @@ use std::net::SocketAddr;
 use std::{io, mem, cmp};
 use std::time::{Instant, Duration};
 
-use futures::{Future, IntoFuture, Sink};
-use futures::future::{self, Either};
+use futures::{Future, IntoFuture, Sink, Stream};
+use futures::future::{self, Either, Loop};
 use futures::unsync::{mpsc, oneshot};
+use tokio;
 use tokio::timer::Delay;
 use rand;
+use itertools::Itertools;
 
-use blockdb::{BlockDb, BlockId};
+use blockdb::{BlockDb, BlockId, Block, Partial};
 use codec::{RootUpdate, RootUpdateResponse, Msg, BlockRequest, BlockRequestResponse,
     TransferPayload, TransferStatus};
+
+// TODO dynamic chunk size scaling
+// not yet implemented
+// for now small constant size and hope for the best
+const CHUNK_SIZE: usize = 1000;
 
 #[derive(Default)]
 struct Client {
@@ -41,8 +49,31 @@ impl Default for TransferOut {
     }
 }
 
-#[derive(Default)]
 struct TransferIn {
+    transfers: Vec<Transfer>,
+    status_tx: Option<mpsc::UnboundedSender<()>>,
+}
+
+impl Default for TransferIn {
+    fn default() -> Self {
+        TransferIn {
+            transfers: Vec::new(),
+            status_tx: None,
+        }
+    }
+}
+
+struct Transfer {
+    /// BlockID for lookup in the BlockDB
+    blockid: BlockId,
+    /// Range of ChunkIDs assigned for this transfer
+    id_range: RangeInclusive<u64>,
+}
+
+impl TransferIn {
+    fn transfer(&self, chunkid: u64) -> &Transfer {
+        self.transfers.iter().find(|t| *t.id_range.start() <= chunkid && *t.id_range.end() <= chunkid).unwrap()
+    }
 }
 
 
@@ -142,6 +173,7 @@ impl<'a> Handler<'a> {
             blockid: req.blockid,
             start_id: transfer.0,
             end_id: transfer.1,
+            len: bdb.get(req.blockid).len(),
         }), addr))
             .map(|_sender| ()).map_err(|_| unreachable!())
     }
@@ -149,14 +181,101 @@ impl<'a> Handler<'a> {
     pub fn block_request_response(&self, addr: SocketAddr, res: BlockRequestResponse) {
         let mut r = self.clients.borrow_mut();
         let client = r.get_mut(&addr).unwrap();
+        let mut tin = &mut client.transfer_in;
+        tin.transfers.push(Transfer {
+            blockid: res.blockid,
+            id_range: res.start_id..=res.end_id,
+        });
+        self.blockdb.borrow_mut().add(Block::Partial(Partial {
+            id: res.blockid,
+            data: vec![0; res.len as usize],
+            available: vec![false; (res.len as usize + CHUNK_SIZE - 1) / CHUNK_SIZE],
+        }));
 
-        if let Some(task) = client.pending_block_requests.remove(&[0; 32]) {
-            task.send(Msg::BlockRequestResponse(res)).unwrap();
+        if tin.transfers.len() == 1 {
+            // launch new status-update sender
+            let (tx, rx) = mpsc::unbounded();
+            tin.status_tx = Some(tx);
+
+            struct State {
+                /// last packet time
+                lpt: Instant,
+                /// packets since last statup update
+                pslu: u64,
+                rx: mpsc::UnboundedReceiver<()>,
+                tx: mpsc::Sender<(Msg, SocketAddr)>,
+                blockdb: Rc<RefCell<BlockDb>>,
+                clients: Rc<RefCell<HashMap<SocketAddr, Client>>>,
+                addr: SocketAddr,
+            }
+
+            let state = State {
+                lpt: Instant::now(),
+                pslu: 0,
+                rx,
+                tx: self.tx.clone(),
+                blockdb: Rc::clone(&self.blockdb),
+                clients: Rc::clone(&self.clients),
+                addr,
+            };
+
+            let loop_fn = future::loop_fn(state, move |state| {
+                let State { lpt, pslu, rx, tx, blockdb, clients, addr } = state;
+                let receiver = rx.into_future()
+                    .and_then(move |(opt, rx)| {
+                        if opt.is_none() {
+                            return Either::A(future::ok(Loop::Break(())));
+                        }
+
+                        // convert to rle
+                        let mut rle = Vec::new();
+                        for t in &clients.borrow()[&addr].transfer_in.transfers {
+                            let mut start = *t.id_range.start();
+                            for (b, group) in blockdb.borrow().get(t.blockid).partial().available.iter().cloned().group_by(|&x| x).into_iter() {
+                                let count = group.count();
+                                if !b {
+                                    rle.push((start, start + count as u64));
+                                }
+                                start += count as u64;
+                            }
+                        }
+                        // TODO: proper stuff
+                        Either::B(tx.clone().send((Msg::TransferStatus(TransferStatus {
+                            missing_ranges: rle,
+                        }), addr))
+                        .map(move |_| Loop::Continue(State {
+                            lpt: Instant::now(),
+                            pslu: 0,
+                            rx,
+                            tx,
+                            blockdb,
+                            clients,
+                            addr,
+                        })).map_err(|_| unreachable!()))
+                    }).then(|res| match res {
+                        Ok(state) => future::ok(state),
+                        Err(e) => future::ok(Loop::Break(())),
+                    });
+                receiver
+            });
+
+            tokio::executor::current_thread::spawn(loop_fn);
         }
     }
 
-    pub fn transfer_payload(&self, addr: SocketAddr, payload: TransferPayload) {
-        unimplemented!()
+    pub fn transfer_payload(&self, addr: SocketAddr, chunk: TransferPayload) {
+        let clients = self.clients.borrow();
+        let mut blockdb = self.blockdb.borrow_mut();
+        let tin = &clients[&addr].transfer_in;
+        let transfer = tin.transfer(chunk.chunkid);
+        tin.status_tx.as_ref().unwrap().unbounded_send(()).unwrap();
+        {
+            let partial = blockdb.get_mut(transfer.blockid).partial_mut();
+            let id = (chunk.chunkid - transfer.id_range.start()) as usize;
+            partial.data[id * CHUNK_SIZE..(id + 1) * CHUNK_SIZE].copy_from_slice(&chunk.data);
+            partial.available[id] = true;
+        }
+        blockdb.try_promote(transfer.blockid);
     }
 
     pub fn transfer_status(&self, addr: SocketAddr, status: TransferStatus) -> impl Future<Item = (), Error = io::Error> {
@@ -217,11 +336,6 @@ impl<'a> Handler<'a> {
         }
     }
 }
-
-// TODO dynamic chunk size scaling
-// not yet implented
-// for now small constant size and hope for the best
-const CHUNK_SIZE: usize = 1000;
 
 fn request_retry<T, F, B>(rx: oneshot::Receiver<T>, mut f: F) -> impl Future<Item = T, Error = io::Error>
     where F: FnMut() -> B, B: IntoFuture<Item = ()> {

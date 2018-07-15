@@ -37,8 +37,27 @@ impl BlockDb {
         &self.blocks[&id]
     }
 
+    pub fn get_mut(&mut self, id: BlockId) -> &mut Block {
+        self.blocks.get_mut(&id).unwrap()
+    }
+
     pub fn add(&mut self, block: Block) {
         self.blocks.entry(block.id()).or_insert(block);
+    }
+
+    pub fn try_promote(&mut self, id: BlockId) -> bool {
+        if !self.blocks[&id].partial().available.iter().all(|&b| b) {
+            return false;
+        }
+        let partial = match self.blocks.remove(&id).unwrap() {
+            Block::Full(_) => unreachable!(),
+            Block::Partial(p) => p,
+        };
+        self.blocks.insert(id, Block::Full(Full {
+            id: partial.id,
+            data: partial.data,
+        }));
+        true
     }
 }
 
@@ -87,6 +106,19 @@ impl Block {
         }
     }
 
+    pub fn partial(&self) -> &Partial {
+        match self {
+            Block::Full(_) => panic!("expected partial block, got full one"),
+            Block::Partial(par) => par,
+        }
+    }
+
+    pub fn partial_mut(&mut self) -> &mut Partial {
+        match self {
+            Block::Full(_) => panic!("expected partial block, got full one"),
+            Block::Partial(par) => par,
+        }
+    }
     pub fn len(&self) -> u64 {
         match self {
             Block::Full(f) => f.data.len() as u64,

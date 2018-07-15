@@ -150,4 +150,5 @@ pub struct BlockRequestResponse {
     pub blockid: BlockId,
     pub start_id: u64,
     pub end_id: u64,
+    pub len: u64,
 }
