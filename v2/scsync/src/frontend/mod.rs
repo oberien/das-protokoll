@@ -5,39 +5,31 @@ use std::io::{Cursor, Write};
 
 use serde::{Serialize, Deserialize};
 use walkdir::WalkDir;
-use serde_cbor;
+use serde_cbor::{self, error::Result};
 use tiny_keccak;
 use crypto::aessafe::{AesSafe128Encryptor, AesSafe128Decryptor};
 use rand::{Rng, OsRng};
 use aesstream::{AesWriter, AesReader};
 
-use blockdb::{Full, BlockRef, BlockDb, Block, Key};
+use blockdb::{Full, BlockRef, BlockDb, Block, Key, BlockId};
+
+mod visitor;
+
+use self::visitor::{ResolveBlockVisitor, VerifyVisitor};
 
 #[derive(Debug)]
-pub struct Frontend {
-    blockdb: BlockDb,
+pub struct Frontend<'a> {
+    blockdb: &'a BlockDb,
 }
 
-impl Frontend {
-    pub fn into_inner(self) -> BlockDb {
-        self.blockdb
-    }
-
-    pub fn get_ref(&self) -> &BlockDb {
-        &self.blockdb
-    }
-
-    pub fn get_mut(&mut self) -> &mut BlockDb {
-        &mut self.blockdb
-    }
-
-    pub fn from_blockdb(blockdb: BlockDb) -> Frontend {
+impl<'a> Frontend<'a> {
+    pub fn from_blockdb(blockdb: &'a BlockDb) -> Frontend<'a> {
         Frontend {
             blockdb,
         }
     }
 
-    pub fn from_folder<P: AsRef<Path>>(folder: P) -> Frontend {
+    pub fn blockdb_from_folder<P: AsRef<Path>>(folder: P) -> BlockDb {
         let folder = folder.as_ref();
         assert!(folder.is_dir(), "root is not a folder");
         let walkdir = WalkDir::new(folder).contents_first(true);
@@ -85,9 +77,7 @@ impl Frontend {
                 }
             }
         }
-        Frontend {
-            blockdb: BlockDb::new(root.unwrap(), blocks)
-        }
+        BlockDb::new(root.unwrap(), blocks)
     }
 
     pub fn write_to_dir<P: AsRef<Path>>(&self, folder: P) {
@@ -96,7 +86,7 @@ impl Frontend {
         fs::remove_dir_all(folder).unwrap();
         fs::create_dir(folder).unwrap();
         let BlockRef { blockid, key, .. } = *self.blockdb.root();
-        let dir = Dir::from_full(self.blockdb.get(blockid).full(), &key);
+        let dir = Dir::from_full(self.blockdb.get(blockid).full(), &key).unwrap();
         self.write_to_dir_rec(folder, dir);
     }
 
@@ -107,19 +97,19 @@ impl Frontend {
             match _type {
                 BlockType::Leaf => {
                     let mut file = File::create(path).unwrap();
-                    let leaf = Leaf::from_full(self.blockdb.get(blockid).full(), &key);
+                    let leaf = Leaf::from_full(self.blockdb.get(blockid).full(), &key).unwrap();
                     file.write_all(&leaf.data).unwrap();
                 }
                 BlockType::Directory => {
                     fs::create_dir(&path).unwrap();
-                    let dir = Dir::from_full(self.blockdb.get(blockid).full(), &key);
+                    let dir = Dir::from_full(self.blockdb.get(blockid).full(), &key).unwrap();
                     self.write_to_dir_rec(path, dir);
                 }
                 BlockType::FileMeta => {
                     let mut file = File::create(path).unwrap();
-                    let meta = Meta::from_full(self.blockdb.get(blockid).full(), &key);
+                    let meta = Meta::from_full(self.blockdb.get(blockid).full(), &key).unwrap();
                     for BlockRef { blockid, key, .. } in meta.blocks {
-                        let leaf = Leaf::from_full(self.blockdb.get(blockid).full(), &key);
+                        let leaf = Leaf::from_full(self.blockdb.get(blockid).full(), &key).unwrap();
                         file.write_all(&leaf.data).unwrap();
                     }
                 }
@@ -135,12 +125,13 @@ pub struct Leaf {
 }
 
 impl Leaf {
-    fn from_full(full: &Full, key: &Key) -> Self {
-        Leaf {
-            data: from_full(full, key),
-        }
+    pub fn from_full(full: &Full, key: &Key) -> Result<Self> {
+        Ok(Leaf {
+            data: from_full(full, key)?,
+        })
     }
 
+    #[allow(unused)]
     fn to_block(&self) -> (Key, Block) {
         to_block(&self.data)
     }
@@ -152,31 +143,33 @@ pub struct Meta {
 }
 
 impl Meta {
-    fn from_full(full: &Full, key: &Key) -> Self {
+    pub fn from_full(full: &Full, key: &Key) -> Result<Self> {
         from_full(full, key)
     }
 
+    #[allow(unused)]
     fn to_block(&self) -> (Key, Block) {
         to_block(self)
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Dir {
     pub children: Vec<Child>,
 }
 
 impl Dir {
-    fn from_full(full: &Full, key: &Key) -> Self {
+    pub fn from_full(full: &Full, key: &Key) -> Result<Self> {
         from_full(full, key)
     }
 
+    #[allow(unused)]
     fn to_block(&self) -> (Key, Block) {
         to_block(self)
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Child {
     pub name: String,
     pub metadata: (),
@@ -185,7 +178,7 @@ pub struct Child {
     pub blockref: BlockRef,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[repr(u8)]
 pub enum BlockType {
     Directory = 1,
@@ -193,10 +186,34 @@ pub enum BlockType {
     Leaf = 3,
 }
 
-fn from_full<T: Deserialize<'static>>(full: &Full, key: &Key) -> T {
+pub enum Decoded {
+    Dir(Dir),
+    Meta(Meta),
+    Leaf(Leaf),
+}
+
+pub fn resolve(blockdb: &BlockDb, blockid: BlockId, pending: bool) -> Decoded {
+    let root = if pending {
+        blockdb.root()
+    } else {
+        blockdb.pending_root().unwrap()
+    };
+    visitor::traverse(blockdb, root, &mut ResolveBlockVisitor(blockid)).unwrap()
+}
+
+pub fn verify(blockdb: &BlockDb, pending: bool) -> bool {
+    let root = if pending {
+        blockdb.root()
+    } else {
+        blockdb.pending_root().unwrap()
+    };
+    visitor::traverse(blockdb, root, &mut VerifyVisitor).is_none()
+}
+
+fn from_full<T: Deserialize<'static>>(full: &Full, key: &Key) -> Result<T> {
     let decryptor = AesSafe128Decryptor::new(key);
     let reader = AesReader::new(Cursor::new(&full.data), decryptor).unwrap();
-    serde_cbor::from_reader(reader).unwrap()
+    serde_cbor::from_reader(reader)
 }
 
 fn to_block<T: Serialize>(t: &T) -> (Key, Block) {

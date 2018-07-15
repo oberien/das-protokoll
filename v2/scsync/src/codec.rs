@@ -1,6 +1,5 @@
 use std::io::Cursor;
 use std::io::ErrorKind;
-use std::iter;
 
 use tokio_io::codec::{Encoder, Decoder};
 use bytes::{Bytes, BytesMut, BufMut};
@@ -24,9 +23,10 @@ impl Decoder for MyCodec {
             return Ok(None);
         }
         let mut bytes = src.take().freeze();
+        let discriminator = bytes[0];
         bytes.advance(1);
         let mut buf = Cursor::new(bytes);
-        Ok(Some(match src[0] {
+        Ok(Some(match discriminator {
             0 => Msg::TransferPayload({
                 let chunkid =  buf.read_u64_varint()?;
                 let pos = buf.position();
@@ -44,7 +44,7 @@ impl Decoder for MyCodec {
             3 => Msg::RootUpdateResponse(serde_cbor::from_reader(buf).unwrap()),
             4 => Msg::BlockRequest(serde_cbor::from_reader(buf).unwrap()),
             5 => Msg::BlockRequestResponse(serde_cbor::from_reader(buf).unwrap()),
-            _ => unimplemented!()
+            _ => unreachable!()
         }))
     }
 }
@@ -52,6 +52,7 @@ impl Decoder for MyCodec {
 pub struct VarintIter<T: AsRef<[u8]>>(Cursor<T>);
 
 impl<T: AsRef<[u8]>> VarintIter<T> {
+    #[allow(unused)]
     pub fn new(t: T) -> VarintIter<T> {
         VarintIter(Cursor::new(t))
     }
@@ -95,16 +96,28 @@ impl Encoder for MyCodec {
                 }
                 dst.truncate(MTU);
             }
-            Msg::RootUpdate(update) => serde_cbor::to_writer(&mut dst.writer(), &update).unwrap(),
-            Msg::RootUpdateResponse(res) => serde_cbor::to_writer(&mut dst.writer(), &res).unwrap(),
-            Msg::BlockRequest(req) => serde_cbor::to_writer(&mut dst.writer(), &req).unwrap(),
-            Msg::BlockRequestResponse(res) => serde_cbor::to_writer(&mut dst.writer(), &res).unwrap(),
+            Msg::RootUpdate(update) => {
+                dst.put_u8(2);
+                serde_cbor::to_writer(&mut dst.writer(), &update).unwrap()
+            },
+            Msg::RootUpdateResponse(res) => {
+                dst.put_u8(3);
+                serde_cbor::to_writer(&mut dst.writer(), &res).unwrap()
+            },
+            Msg::BlockRequest(req) => {
+                dst.put_u8(4);
+                serde_cbor::to_writer(&mut dst.writer(), &req).unwrap()
+            },
+            Msg::BlockRequestResponse(res) => {
+                dst.put_u8(5);
+                serde_cbor::to_writer(&mut dst.writer(), &res).unwrap()
+            },
         }
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Msg {
     TransferPayload(TransferPayload),
     TransferStatus(TransferStatus),
@@ -115,37 +128,37 @@ pub enum Msg {
     // use Bytes for payload data
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TransferPayload {
     pub chunkid: u64,
     pub data: Bytes,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TransferStatus {
     pub missing_ranges: Vec<(u64, u64)>, // from, to
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RootUpdate {
     pub nonce: [u8; 12],
     pub from_blockid: BlockId,
     pub to_blockref: BlockRef,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RootUpdateResponse {
     pub from_blockid: BlockId,
     pub to_blockid: BlockId,
     pub to_key: Key,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockRequest {
     pub blockid: BlockId,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockRequestResponse {
     pub blockid: BlockId,
     pub start_id: u64,

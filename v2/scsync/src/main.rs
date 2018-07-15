@@ -28,7 +28,7 @@ pub struct Opt {
     #[structopt(short = "p", long = "port", default_value = "21088")]
     port: u16,
     /// Remote host
-    #[structopt(short = "h", long = "host", default_value = "localhost")]
+    #[structopt(short = "h", long = "host", default_value = "127.0.0.1")]
     host: String,
     /// Directory to upload files from
     #[structopt(short = "f", long = "files")]
@@ -43,7 +43,7 @@ use futures::unsync::mpsc;
 use futures::future::Either::*;
 
 use std::usize;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 mod frontend;
 mod blockdb;
@@ -52,34 +52,33 @@ mod handler;
 
 use std::time::Duration;
 
-use codec::{Msg, RootUpdate, MyCodec};
+use codec::{Msg, MyCodec};
 use frontend::Frontend;
 use handler::{Handler, ClientState};
 
 fn main() {
     let opt = Opt::from_args();
-    let server_addr = if opt.server {
-        None
+    let addr = SocketAddr::new(opt.host.parse().unwrap(), opt.port);
+    let bind_addr = if opt.server {
+        addr
     } else {
-        Some(SocketAddr::new(opt.host.parse().unwrap(), opt.port))
+        "0.0.0.0:0".to_socket_addrs().unwrap().next().unwrap()
     };
 
-    let frontend = Frontend::from_folder(opt.files);
+    let blockdb = Frontend::blockdb_from_folder(&opt.files);
 
-    let blockdb = frontend.into_inner();
-
-    let addr = "127.0.0.1:12345".parse().unwrap();
-    let socket = UdpSocket::bind(&addr).unwrap();
+    let socket = UdpSocket::bind(&bind_addr).unwrap();
 
     let framed = UdpFramed::new(socket, MyCodec);
     let (utx, rx) = framed.split();
     let (tx, crx) = mpsc::channel(1); // would like this to be 0 but impossibruh
 
-    let handler = Handler::new(Duration::from_secs(1) / opt.pps, blockdb, &tx);
+    let handler = Handler::new(opt.files.into(), Duration::from_secs(1) / opt.pps, blockdb, &tx);
 
-    let init_task = match server_addr {
-        None => A(future::ok(())), // nothing to do for servers
-        Some(srv) => B(handler.connect(srv)),
+    let init_task = if opt.server {
+        A(future::ok(())) // nothing to do for servers
+    } else {
+        B(handler.connect(addr))
     };
 
     // omfg give bang type already !!!!!!!!
@@ -94,14 +93,15 @@ fn main() {
         match handler.client_state(&addr) {
             ClientState::New => A(match msg {
                 Msg::RootUpdate(update) => {
-                    A(handler.unconnected_root_update(addr, update))
+                    handler.unconnected_root_update(addr, update);
+                    future::ok(())
                 },
-                _ => B(future::ok(())), // ignore all other messages from a node we don't know
+                _ => future::ok(()), // ignore all other messages from a node we don't know
             }),
             ClientState::Known => B({
                 match msg {
                     // TODO: not sure how to handle root updates here??
-                    Msg::RootUpdate(update) => A(future::ok(())),
+                    Msg::RootUpdate(_) => A(future::ok(())),
                     Msg::RootUpdateResponse(res) => {
                         if !handler.needs_update(&res) {
                             // nothing to do

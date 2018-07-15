@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::mem;
 
 pub type BlockId = [u8; 32];
 pub type Key = [u8; 16];
@@ -31,6 +32,15 @@ impl BlockDb {
 
     pub fn set_pending_root(&mut self, pending_root: BlockRef) {
         self.pending_root = Some(pending_root);
+    }
+
+    /// returns old root
+    pub fn apply_pending(&mut self) -> BlockRef {
+        mem::replace(&mut self.root, self.pending_root.take().unwrap())
+    }
+
+    pub fn contains(&self, id: BlockId) -> bool {
+        self.blocks.contains_key(&id)
     }
 
     pub fn get(&self, id: BlockId) -> &Block {
