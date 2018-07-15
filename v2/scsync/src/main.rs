@@ -42,7 +42,7 @@ pub struct Opt {
 
 use tokio::prelude::*;
 use tokio::net::{UdpSocket, UdpFramed};
-use futures::unsync::mpsc;
+use futures::sync::mpsc;
 use futures::future::Either::*;
 
 use std::usize;
@@ -77,8 +77,10 @@ fn main() {
     let framed = UdpFramed::new(socket, MyCodec);
     let (utx, rx) = framed.split();
     let (tx, crx) = mpsc::channel(1); // would like this to be 0 but impossibruh
+    // fuck 'static
+    let tx = Box::leak(Box::new(tx));
 
-    let handler = Handler::new(opt.files.into(), Duration::from_secs(1) / opt.pps, blockdb, &tx);
+    let handler = Handler::new(opt.files.into(), Duration::from_secs(1) / opt.pps, blockdb, tx);
 
     let init_task = if opt.server {
         A(future::ok(())) // nothing to do for servers
@@ -92,9 +94,10 @@ fn main() {
     // cant happen
     //let tx = tx.sink_map_err(|_| { unreachable!(); std::io::Error::new(std::io::ErrorKind::AddrInUse, "") });
 
-    let send_task = crx.forward(utx).map(|(_, _)| ());
+    let send_task = crx.inspect(|msg| trace!("send {:?}", msg))
+        .forward(utx).map(|(_, _)| ());
 
-    let recv_task = rx.map(|(msg, addr)| {
+    let recv_task = rx.map(move |(msg, addr)| {
         trace!("received message from {}", addr);
         match handler.client_state(&addr) {
             ClientState::New => A(match msg {
@@ -145,10 +148,9 @@ fn main() {
         A(A(send_task)),
         A(B(init_task)),
         B(recv_task),
-    ]);
+    ]).map(|_| ()).map_err(|_| unreachable!());
 
-    let res: std::io::Result<_> = tokio::executor::current_thread::block_on_all(app);
+    tokio::run(app);
 
-    assert!(res.is_ok());
-    println!("{:?}", res);
+    println!("done");
 }

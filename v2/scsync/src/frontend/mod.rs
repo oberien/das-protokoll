@@ -52,7 +52,7 @@ impl<'a> Frontend<'a> {
                 }.to_block();
                 let parent = file.path().parent().unwrap().to_owned();
                 let child = Child {
-                    name: file.path().file_name().unwrap().to_str().unwrap().to_string(),
+                    name: file.file_name().to_string_lossy().into_owned(),
                     metadata: (),
                     _type: BlockType::Leaf,
                     blockref: BlockRef {
@@ -71,6 +71,16 @@ impl<'a> Frontend<'a> {
                 }.to_block();
                 let id = block.id();
                 blocks.insert(id, block);
+                map.entry(file.path().parent().unwrap().to_owned()).or_insert_with(Default::default).push(Child {
+                    name: file.file_name().to_string_lossy().into_owned(),
+                    metadata: (),
+                    _type: BlockType::Directory,
+                    blockref: BlockRef {
+                        blockid: id,
+                        key: key,
+                        hints: Vec::new(),
+                    }
+                });
 
                 if file.path() == folder {
                     root = Some(BlockRef::new(id, key, Vec::new()));
@@ -120,6 +130,7 @@ impl<'a> Frontend<'a> {
     // TODO: inotify with diff
 }
 
+#[derive(Debug)]
 pub struct Leaf {
     pub data: Vec<u8>,
 }
@@ -131,13 +142,12 @@ impl Leaf {
         })
     }
 
-    #[allow(unused)]
     fn to_block(&self) -> (Key, Block) {
         to_block(&self.data)
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Meta {
     pub blocks: Vec<BlockRef>,
 }
@@ -153,7 +163,7 @@ impl Meta {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Dir {
     pub children: Vec<Child>,
 }
@@ -163,13 +173,12 @@ impl Dir {
         from_full(full, key)
     }
 
-    #[allow(unused)]
     fn to_block(&self) -> (Key, Block) {
         to_block(self)
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Child {
     pub name: String,
     pub metadata: (),
@@ -178,7 +187,7 @@ pub struct Child {
     pub blockref: BlockRef,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum BlockType {
     Directory = 1,
@@ -186,6 +195,7 @@ pub enum BlockType {
     Leaf = 3,
 }
 
+#[derive(Debug)]
 pub enum Decoded {
     Dir(Dir),
     Meta(Meta),
@@ -194,18 +204,18 @@ pub enum Decoded {
 
 pub fn resolve(blockdb: &BlockDb, blockid: BlockId, pending: bool) -> Decoded {
     let root = if pending {
-        blockdb.root()
-    } else {
         blockdb.pending_root().unwrap()
+    } else {
+        blockdb.root()
     };
     visitor::traverse(blockdb, root, &mut ResolveBlockVisitor(blockid)).unwrap()
 }
 
 pub fn verify(blockdb: &BlockDb, pending: bool) -> bool {
     let root = if pending {
-        blockdb.root()
-    } else {
         blockdb.pending_root().unwrap()
+    } else {
+        blockdb.root()
     };
     visitor::traverse(blockdb, root, &mut VerifyVisitor).is_none()
 }

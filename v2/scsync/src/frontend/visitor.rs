@@ -13,21 +13,23 @@ pub trait Visitor<T> {
 }
 
 pub fn traverse<T, V: Visitor<T>>(blockdb: &BlockDb, root: &BlockRef, visitor: &mut V) -> Option<T> {
-    let dir = Dir::from_full(blockdb.get(root.blockid).full(), &root.key).unwrap();
-    traverse_rec(blockdb, PathBuf::new(), root, Decoded::Dir(dir), visitor)
+    let full = blockdb.get(root.blockid).full();
+    let dir = Dir::from_full(full, &root.key).unwrap();
+    let path = PathBuf::new();
+    if let Some(t) = visitor.visit_dir(&path, full, &dir) {
+        return Some(t);
+    }
+    traverse_rec(blockdb, path, root, Decoded::Dir(dir), visitor)
 }
 
 fn traverse_rec<T, V: Visitor<T>>(blockdb: &BlockDb, path: PathBuf, bref: &BlockRef, dec: Decoded, visitor: &mut V) -> Option<T> {
     if !blockdb.contains(bref.blockid) {
         return visitor.visit_missing(path, bref.blockid);
     }
-
     let block = blockdb.get(bref.blockid);
-
     if let Block::Partial(partial) = block {
         return visitor.visit_partial(path, partial);
     }
-
     let full = block.full();
 
     match dec {
@@ -37,8 +39,23 @@ fn traverse_rec<T, V: Visitor<T>>(blockdb: &BlockDb, path: PathBuf, bref: &Block
             }
 
             for Child { name, _type, blockref, .. } in dir.children {
+                if !blockdb.contains(blockref.blockid) {
+                    if let Some(t) = visitor.visit_missing(&path, bref.blockid) {
+                        return Some(t);
+                    }
+                    continue;
+                }
+                let block = blockdb.get(bref.blockid);
+                if let Block::Partial(partial) = block {
+                    if let Some(t) = visitor.visit_partial(&path, partial) {
+                        return Some(t);
+                    }
+                    continue;
+                }
+
+                let full = block.full();
                 let path = path.join(name);
-                let full = blockdb.get(blockref.blockid).full();
+                error!("PATH {}, type: {:?}", path.display(), _type);
                 let dec = match _type {
                     BlockType::Directory => Decoded::Dir(Dir::from_full(full, &blockref.key).unwrap()),
                     BlockType::FileMeta => Decoded::Meta(Meta::from_full(full, &blockref.key).unwrap()),

@@ -1,6 +1,5 @@
 use std::ops::Range;
-use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::{io, mem, cmp};
@@ -9,7 +8,7 @@ use std::path::PathBuf;
 
 use futures::{Future, IntoFuture, Sink, Stream};
 use futures::future::{self, Either, Loop};
-use futures::unsync::{mpsc, oneshot};
+use futures::sync::{mpsc, oneshot};
 use tokio;
 use tokio::timer::Delay;
 use rand;
@@ -51,6 +50,7 @@ impl Default for TransferOut {
     }
 }
 
+#[derive(Debug)]
 struct TransferIn {
     transfers: Vec<Transfer>,
     status_tx: Option<mpsc::UnboundedSender<()>>,
@@ -65,7 +65,7 @@ impl Default for TransferIn {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Transfer {
     /// BlockID for lookup in the BlockDB
     blockid: BlockId,
@@ -75,7 +75,7 @@ struct Transfer {
 
 impl TransferIn {
     fn transfer(&self, chunkid: u64) -> Transfer {
-        self.transfers.iter().find(|t| t.id_range.start <= chunkid && t.id_range.end < chunkid).unwrap().clone()
+        self.transfers.iter().find(|t| t.id_range.start <= chunkid && chunkid < t.id_range.end).unwrap().clone()
     }
 }
 
@@ -87,8 +87,8 @@ pub enum ClientState {
 
 pub struct Handler<'a> {
     folder: PathBuf,
-    blockdb: Rc<RefCell<BlockDb>>,
-    clients: Rc<RefCell<HashMap<SocketAddr, Client>>>,
+    blockdb: Arc<Mutex<BlockDb>>,
+    clients: Arc<Mutex<HashMap<SocketAddr, Client>>>,
     tx: &'a mpsc::Sender<(Msg, SocketAddr)>,
     packet_delay: Duration,
 }
@@ -97,8 +97,8 @@ impl<'a> Handler<'a> {
     pub fn new(folder: PathBuf, packet_delay: Duration, blockdb: BlockDb, tx: &'a mpsc::Sender<(Msg, SocketAddr)>) -> Handler {
         Handler {
             folder,
-            blockdb: Rc::new(RefCell::new(blockdb)),
-            clients: Rc::new(RefCell::new(HashMap::new())),
+            blockdb: Arc::new(Mutex::new(blockdb)),
+            clients: Arc::new(Mutex::new(HashMap::new())),
             tx,
             packet_delay,
         }
@@ -106,7 +106,7 @@ impl<'a> Handler<'a> {
 
     // TODO: it mega sucks how this structure runs the hashmap lookup twice for absolutely no reason
     pub fn client_state(&self, addr: &SocketAddr) -> ClientState {
-        match self.clients.borrow().contains_key(addr) {
+        match self.clients.lock().unwrap().contains_key(addr) {
             true => ClientState::Known,
             false => ClientState::New,
         }
@@ -114,23 +114,24 @@ impl<'a> Handler<'a> {
 
     pub fn connect(&self, srv: SocketAddr) -> impl Future<Item = (), Error = io::Error> {
         trace!("try to connect to server");
-        let mut r = self.clients.borrow_mut();
+        let mut r = self.clients.lock().unwrap();
         r.insert(srv.clone(), Client::default());
 
         // TODO: if this is lost we fucking lost
         self.tx.clone().send((Msg::RootUpdate(RootUpdate {
             from_blockid: [0; 32], // TODO: what is the empty state?
-            to_blockref: self.blockdb.borrow().root().clone(),
+            to_blockref: self.blockdb.lock().unwrap().root().clone(),
             nonce: rand::random(),
         }), srv)).map(|_sender| trace!("initial rootupdate sent")).map_err(|_| unreachable!())
     }
 
     pub fn unconnected_root_update(&self, addr: SocketAddr, update: RootUpdate) {
         trace!("Got unconnected RootUpdate: {:?}", update);
-        if update.to_blockref.blockid == self.blockdb.borrow().root().blockid {
+        let mut blockdb = self.blockdb.lock().unwrap();
+        if update.to_blockref.blockid == blockdb.root().blockid {
             // nothing to do, just respond
-            let blockid = self.blockdb.borrow().root().blockid;
-            let key = self.blockdb.borrow().root().key;
+            let blockid = blockdb.root().blockid;
+            let key = blockdb.root().key;
             let msg = Msg::RootUpdateResponse(RootUpdateResponse {
                 from_blockid: blockid,
                 to_blockid: blockid,
@@ -138,31 +139,31 @@ impl<'a> Handler<'a> {
             });
             trace!("send RootUpdateResponse to unconnected client");
             // if this is lost we don't care, it's just a hint, clients should poll regardless
-            tokio::executor::current_thread::spawn(self.tx.clone().send((msg, addr))
-                .map(|_sender| ()).map_err(|_| unreachable!()))
+            tokio::spawn(self.tx.clone().send((msg, addr))
+                .map(|_sender| ()).map_err(|_| unreachable!()));
         } else {
-            let mut blockdb = self.blockdb.borrow_mut();
+            let mut clients = self.clients.lock().unwrap();
             if blockdb.pending_root().is_some() {
                 // ignore request until new root is done
                 return;
             }
             // open connection
-            self.clients.borrow_mut().insert(addr, Client::default());
+            clients.insert(addr, Client::default());
             let blockid = update.to_blockref.blockid;
             blockdb.set_pending_root(update.to_blockref);
             // request new root
             trace!("register client");
-            self.send_block_request(self.clients.borrow_mut().get_mut(&addr).unwrap(), BlockRequest { blockid }, addr);
+            self.send_block_request(clients.get_mut(&addr).unwrap(), BlockRequest { blockid }, addr);
         }
     }
 
     pub fn needs_update(&self, res: &RootUpdateResponse) -> bool {
-        self.blockdb.borrow().root().blockid != res.to_blockid
+        self.blockdb.lock().unwrap().root().blockid != res.to_blockid
     }
 
     pub fn root_update_response(&self, addr: SocketAddr, res: RootUpdateResponse) -> impl Future<Item = (), Error = io::Error> {
         trace!("got RootUpdateResponse: {:?}", res);
-        let mut r = self.clients.borrow_mut();
+        let mut r = self.clients.lock().unwrap();
         let client = r.get_mut(&addr).unwrap();
         // prepare to receive a block request response, then send one out
         let (otx, orx) = oneshot::channel();
@@ -183,8 +184,8 @@ impl<'a> Handler<'a> {
 
     pub fn block_request(&self, addr: SocketAddr, req: BlockRequest) -> impl Future<Item = (), Error = io::Error> {
         trace!("got BlockRequest: {:?}", req);
-        let bdb = self.blockdb.borrow_mut();
-        let mut r = self.clients.borrow_mut();
+        let bdb = self.blockdb.lock().unwrap();
+        let mut r = self.clients.lock().unwrap();
         let client = r.get_mut(&addr).unwrap();
 
         let out = &mut client.transfer_out;
@@ -210,8 +211,8 @@ impl<'a> Handler<'a> {
 
     pub fn block_request_response(&self, addr: SocketAddr, res: BlockRequestResponse) {
         trace!("got BlockRequestResponse: {:?}", res);
-        let mut r = self.clients.borrow_mut();
-        let client = r.get_mut(&addr).unwrap();
+        let mut clients = self.clients.lock().unwrap();
+        let client = clients.get_mut(&addr).unwrap();
         if let Some(task) = client.pending_block_requests.remove(&res.blockid) {
             task.send(()).unwrap();
         }
@@ -220,7 +221,7 @@ impl<'a> Handler<'a> {
             blockid: res.blockid,
             id_range: res.start_id..res.end_id,
         });
-        self.blockdb.borrow_mut().add(Block::Partial(Partial {
+        self.blockdb.lock().unwrap().add(Block::Partial(Partial {
             id: res.blockid,
             data: vec![0; res.len as usize],
             available: vec![false; (res.len as usize + CHUNK_SIZE - 1) / CHUNK_SIZE],
@@ -240,8 +241,8 @@ impl<'a> Handler<'a> {
                 pslu: u64,
                 rx: mpsc::UnboundedReceiver<()>,
                 tx: mpsc::Sender<(Msg, SocketAddr)>,
-                blockdb: Rc<RefCell<BlockDb>>,
-                clients: Rc<RefCell<HashMap<SocketAddr, Client>>>,
+                blockdb: Arc<Mutex<BlockDb>>,
+                clients: Arc<Mutex<HashMap<SocketAddr, Client>>>,
                 addr: SocketAddr,
             }
 
@@ -250,8 +251,8 @@ impl<'a> Handler<'a> {
                 pslu: 0,
                 rx,
                 tx: self.tx.clone(),
-                blockdb: Rc::clone(&self.blockdb),
-                clients: Rc::clone(&self.clients),
+                blockdb: Arc::clone(&self.blockdb),
+                clients: Arc::clone(&self.clients),
                 addr,
             };
 
@@ -265,14 +266,17 @@ impl<'a> Handler<'a> {
 
                         // convert to rle
                         let mut rle = Vec::new();
-                        for t in &clients.borrow()[&addr].transfer_in.transfers {
-                            let mut start = t.id_range.start;
-                            for (b, group) in blockdb.borrow().get(t.blockid).partial().available.iter().cloned().group_by(|&x| x).into_iter() {
-                                let count = group.count();
-                                if !b {
-                                    rle.push((start, start + count as u64));
+                        // if transfer is outstanding, fill rle
+                        if let Some(client) = clients.lock().unwrap().get(&addr) {
+                            for t in &client.transfer_in.transfers {
+                                let mut start = t.id_range.start;
+                                for (b, group) in blockdb.lock().unwrap().get(t.blockid).partial().available.iter().cloned().group_by(|&x| x).into_iter() {
+                                    let count = group.count();
+                                    if !b {
+                                        rle.push((start, start + count as u64));
+                                    }
+                                    start += count as u64;
                                 }
-                                start += count as u64;
                             }
                         }
                         trace!("sending status update: {:?}", rle);
@@ -296,14 +300,16 @@ impl<'a> Handler<'a> {
                 receiver
             });
 
-            tokio::executor::current_thread::spawn(loop_fn);
+            tokio::spawn(loop_fn);
+
+            tin.status_tx.as_ref().unwrap().unbounded_send(()).unwrap();
         }
     }
 
     pub fn transfer_payload(&self, addr: SocketAddr, chunk: TransferPayload) {
-        trace!("got TransferPayload, len {}", chunk.data.len());
-        let mut clients = self.clients.borrow_mut();
-        let mut blockdb = self.blockdb.borrow_mut();
+        trace!("got TransferPayload, chunkid: {}, len: {}", chunk.chunkid, chunk.data.len());
+        let mut clients = self.clients.lock().unwrap();
+        let mut blockdb = self.blockdb.lock().unwrap();
         let transfer = {
             let tin = &clients[&addr].transfer_in;
             tin.status_tx.as_ref().unwrap().unbounded_send(()).unwrap();
@@ -312,15 +318,27 @@ impl<'a> Handler<'a> {
         {
             let partial = blockdb.get_mut(transfer.blockid).partial_mut();
             let id = (chunk.chunkid - transfer.id_range.start) as usize;
-            partial.data[id * CHUNK_SIZE..(id + 1) * CHUNK_SIZE].copy_from_slice(&chunk.data);
+            trace!("id within transfer: {}", id);
+            let from = id * CHUNK_SIZE;
+            let to = cmp::min((id + 1) * CHUNK_SIZE, chunk.data.len());
+            partial.data[from..to].copy_from_slice(&chunk.data);
             partial.available[id] = true;
         }
         if !blockdb.try_promote(transfer.blockid) {
             return;
         }
+
         // block transfer complete, maybe request further blocks
-        trace!("block transfer complete");
-        let dec = frontend::resolve(&*blockdb, blockdb.get(transfer.blockid).full().id, true);
+        trace!("block transfer complete: {:x?}", transfer.blockid);
+        // remove transfer
+        {
+            let transfers = &mut clients.get_mut(&addr).unwrap().transfer_in.transfers;
+            let pos = transfers.iter().position(|t| *t == transfer).unwrap();
+            transfers.remove(pos);
+        }
+
+        let dec = frontend::resolve(&*blockdb, transfer.blockid, true);
+        println!("{:?}", dec);
         // TODO: check if block is valid
         match dec {
             Decoded::Dir(dir) => for child in dir.children {
@@ -341,44 +359,47 @@ impl<'a> Handler<'a> {
         }
         // all transfers complete
         trace!("all transfers complete");
-        { Frontend::from_blockdb(&*blockdb).write_to_dir(&self.folder); }
         let from = blockdb.apply_pending();
-        // if this is lost we don't care, it's just a hint, clients should poll regardless
-        // TODO: send to all clients
+        { Frontend::from_blockdb(&*blockdb).write_to_dir(&self.folder); }
+
         let msg = Msg::RootUpdateResponse(RootUpdateResponse {
             from_blockid: from.blockid,
             to_blockid: blockdb.root().blockid,
             to_key: blockdb.root().key,
         });
-        for &client_addr in self.clients.borrow().keys() {
+        for &client_addr in clients.keys() {
+            // if this is lost we don't care, it's just a hint, clients should poll regardless
             let req = self.tx.clone().send((msg.clone(), client_addr))
                 .map(|_| ())
                 .map_err(|_| unreachable!());
-            tokio::executor::current_thread::spawn(req);
+            tokio::spawn(req);
         }
-        self.clients.borrow_mut().remove(&addr);
+        clients.remove(&addr);
     }
 
     pub fn transfer_status(&self, addr: SocketAddr, status: TransferStatus) -> impl Future<Item = (), Error = io::Error> {
         trace!("got transfer status: {:?}", status);
-        let mut r = self.clients.borrow_mut();
-        let client = r.get_mut(&addr).unwrap();
+        let launch_transfer = {
+            let mut r = self.clients.lock().unwrap();
+            let client = r.get_mut(&addr).unwrap();
 
-        // TODO: don't reset cursor if RTT estimate reveals that missing packets are still inflight
-        let new_cursor = status.missing_ranges.first().map(|x| x.0);
+            // TODO: don't reset cursor if RTT estimate reveals that missing packets are still inflight
+            let new_cursor = status.missing_ranges.first().map(|x| x.0);
 
-        // update cursor. was transfer idle before? if yes we need to (re)start the task
-        let launch_transfer = mem::replace(&mut client.transfer_out.cursor, new_cursor).is_none() && new_cursor.is_some();
+            // update cursor. was transfer idle before? if yes we need to (re)start the task
+            let launch_transfer = mem::replace(&mut client.transfer_out.cursor, new_cursor).is_none() && new_cursor.is_some();
 
-        client.transfer_out.todo = status.missing_ranges;
+            client.transfer_out.todo = status.missing_ranges;
+            launch_transfer
+        };
 
         if launch_transfer {
-            let clients = Rc::clone(&self.clients);
-            let bdb = Rc::clone(&self.blockdb);
+            let clients = Arc::clone(&self.clients);
+            let bdb = Arc::clone(&self.blockdb);
             let sender = self.tx.clone();
             let packet_delay = self.packet_delay.clone();
             Either::A(future::loop_fn(sender, move |sender| {
-                let mut r = clients.borrow_mut();
+                let mut r = clients.lock().unwrap();
                 let client = r.get_mut(&addr).unwrap();
 
                 let out = &mut client.transfer_out;
@@ -393,7 +414,7 @@ impl<'a> Handler<'a> {
                         let cib = (cursor - from) as usize; // todo checked cast
 
                         // grab data from block so we can send
-                        let mut bdb = bdb.borrow_mut();
+                        let mut bdb = bdb.lock().unwrap();
                         let payload: Vec<_> = bdb.get(bid.clone()).full().data.iter().cloned().skip(cib * CHUNK_SIZE).take(CHUNK_SIZE).collect();
 
                         // find next valid chunk
@@ -422,10 +443,10 @@ impl<'a> Handler<'a> {
         let (otx, orx) = oneshot::channel();
         client.pending_block_requests.insert(req.blockid, otx);
         let tx = self.tx.clone();
-        tokio::executor::current_thread::spawn(request_retry(orx, move || {
+        tokio::spawn(request_retry(orx, move || {
             (&tx).clone().send((Msg::BlockRequest(req.clone()), addr))
                 .map(|_| ())
-        }).map_err(|_| unreachable!()))
+        }).map_err(|_| unreachable!()));
     }
 }
 
