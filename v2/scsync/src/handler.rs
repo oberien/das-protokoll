@@ -107,6 +107,18 @@ impl<'a> Handler<'a> {
         }
     }
 
+    pub fn connect(&self, srv: SocketAddr) -> impl Future<Item = (), Error = io::Error> {
+        let mut r = self.clients.borrow_mut();
+        r.insert(srv.clone(), Client::default());
+
+        // TODO: if this is lost we fucking lost
+        self.tx.clone().send((Msg::RootUpdate(RootUpdate {
+            from_blockid: [0; 32], // TODO: what is the empty state?
+            to_blockref: self.blockdb.borrow().root().clone(),
+            nonce: rand::random(),
+        }), srv)).map(|_sender| ()).map_err(|_| unreachable!())
+    }
+
     pub fn unconnected_root_update(&self, addr: SocketAddr, update: RootUpdate) -> impl Future<Item = (), Error = io::Error> {
         let mut r = self.clients.borrow_mut();
         let client = r.get_mut(&addr).unwrap();

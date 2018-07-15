@@ -50,17 +50,12 @@ fn main() {
     let (utx, rx) = framed.split();
     let (tx, crx) = mpsc::channel(1); // would like this to be 0 but impossibruh
 
-    // TODO: if this is lost we fucking lost
+    let handler = Handler::new(Duration::from_secs(1) / pps, blockdb, &tx);
+
     let init_task = match server_addr {
         None => A(future::ok(())), // nothing to do for servers
-        Some(srv) => B(tx.clone().send((Msg::RootUpdate(RootUpdate {
-            from_blockid: [0; 32], // TODO: what is the empty state?
-            to_blockref: blockdb.root().clone(),
-            nonce: rand::random(),
-        }), srv.parse().unwrap())).map(|_sender| ()).map_err(|_| unreachable!())),
+        Some(srv) => B(handler.connect(srv.parse().unwrap())),
     };
-
-    let handler = Handler::new(Duration::from_secs(1) / pps, blockdb, &tx);
 
     // omfg give bang type already !!!!!!!!
     let crx = crx.map_err(|()| None.unwrap());
