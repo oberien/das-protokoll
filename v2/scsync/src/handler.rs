@@ -67,7 +67,7 @@ struct Transfer {
     /// BlockID for lookup in the BlockDB
     blockid: BlockId,
     /// Range of ChunkIDs assigned for this transfer
-    id_range: RangeInclusive<u64>,
+    id_range: RangeInclusive<u64>, // bug: range is actually exclusive
 }
 
 impl TransferIn {

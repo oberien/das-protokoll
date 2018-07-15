@@ -28,15 +28,19 @@ mod handler;
 
 use std::time::Duration;
 
-use codec::{Msg, MyCodec};
+use codec::{Msg, RootUpdate, MyCodec};
 use frontend::Frontend;
 use handler::{Handler, ClientState};
 
 fn main() {
+    // argparse
+    let server_addr = Some("127.0.0.1:12346"); // server has None here
+    let pps = 1000;
+
     let frontend = Frontend::from_folder("foo");
     println!("{:#x?}", frontend);
     frontend.write_to_dir("bar");
-    panic!("nyi");
+
     let blockdb = frontend.into_inner();
 
     let addr = "127.0.0.1:12345".parse().unwrap();
@@ -46,7 +50,17 @@ fn main() {
     let (utx, rx) = framed.split();
     let (tx, crx) = mpsc::channel(1); // would like this to be 0 but impossibruh
 
-    let handler = Handler::new(Duration::from_secs(1)/*todo*/, blockdb, &tx);
+    // TODO: if this is lost we fucking lost
+    let init_task = match server_addr {
+        None => A(future::ok(())), // nothing to do for servers
+        Some(srv) => B(tx.clone().send((Msg::RootUpdate(RootUpdate {
+            from_blockid: [0; 32], // TODO: what is the empty state?
+            to_blockref: blockdb.root().clone(),
+            nonce: rand::random(),
+        }), srv.parse().unwrap())).map(|_sender| ()).map_err(|_| unreachable!())),
+    };
+
+    let handler = Handler::new(Duration::from_secs(1) / pps, blockdb, &tx);
 
     // omfg give bang type already !!!!!!!!
     let crx = crx.map_err(|()| None.unwrap());
@@ -54,7 +68,6 @@ fn main() {
     // cant happen
     //let tx = tx.sink_map_err(|_| { unreachable!(); std::io::Error::new(std::io::ErrorKind::AddrInUse, "") });
 
-    // TODO: wait according to send rate
     let send_task = crx.forward(utx).map(|(_, _)| ());
 
     let recv_task = rx.map(|(msg, addr)| {
@@ -103,11 +116,13 @@ fn main() {
 
 
     let app = future::join_all(vec![
-        A(send_task),
+        A(A(send_task)),
+        A(B(init_task)),
         B(recv_task),
     ]);
 
     let res: std::io::Result<_> = tokio::executor::current_thread::block_on_all(app);
 
+    assert!(res.is_ok());
     println!("{:?}", res);
 }

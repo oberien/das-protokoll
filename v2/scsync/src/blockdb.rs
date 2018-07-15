@@ -61,7 +61,7 @@ impl BlockDb {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockRef {
     pub blockid: BlockId,
     pub key: Key,
@@ -78,7 +78,7 @@ impl BlockRef {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Hint {
     pub blockref: BlockRef,
     pub offset: u64,
