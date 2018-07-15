@@ -21,6 +21,7 @@ Missing:
 * Multi-client handling (multi-client not possible without proper diffing)
 * Inotify / diffing (shouldn't be more than 20 lines with `inotify` and `diff` crate )
 * Verification that blockid is valid hash of block
+* Proper error handling (currently crash on any unexpected message)
 
 Notes:
 

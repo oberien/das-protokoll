@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 extern crate tokio;
 extern crate tokio_io;
 extern crate bytes;
@@ -57,6 +60,8 @@ use frontend::Frontend;
 use handler::{Handler, ClientState};
 
 fn main() {
+    env_logger::init();
+
     let opt = Opt::from_args();
     let addr = SocketAddr::new(opt.host.parse().unwrap(), opt.port);
     let bind_addr = if opt.server {
@@ -90,6 +95,7 @@ fn main() {
     let send_task = crx.forward(utx).map(|(_, _)| ());
 
     let recv_task = rx.map(|(msg, addr)| {
+        trace!("received message from {}", addr);
         match handler.client_state(&addr) {
             ClientState::New => A(match msg {
                 Msg::RootUpdate(update) => {

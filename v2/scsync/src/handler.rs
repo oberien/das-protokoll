@@ -113,6 +113,7 @@ impl<'a> Handler<'a> {
     }
 
     pub fn connect(&self, srv: SocketAddr) -> impl Future<Item = (), Error = io::Error> {
+        trace!("try to connect to server");
         let mut r = self.clients.borrow_mut();
         r.insert(srv.clone(), Client::default());
 
@@ -121,10 +122,11 @@ impl<'a> Handler<'a> {
             from_blockid: [0; 32], // TODO: what is the empty state?
             to_blockref: self.blockdb.borrow().root().clone(),
             nonce: rand::random(),
-        }), srv)).map(|_sender| ()).map_err(|_| unreachable!())
+        }), srv)).map(|_sender| trace!("initial rootupdate sent")).map_err(|_| unreachable!())
     }
 
     pub fn unconnected_root_update(&self, addr: SocketAddr, update: RootUpdate) {
+        trace!("Got unconnected RootUpdate: {:?}", update);
         if update.to_blockref.blockid == self.blockdb.borrow().root().blockid {
             // nothing to do, just respond
             let blockid = self.blockdb.borrow().root().blockid;
@@ -134,6 +136,7 @@ impl<'a> Handler<'a> {
                 to_blockid: blockid,
                 to_key: key,
             });
+            trace!("send RootUpdateResponse to unconnected client");
             // if this is lost we don't care, it's just a hint, clients should poll regardless
             tokio::executor::current_thread::spawn(self.tx.clone().send((msg, addr))
                 .map(|_sender| ()).map_err(|_| unreachable!()))
@@ -148,6 +151,7 @@ impl<'a> Handler<'a> {
             let blockid = update.to_blockref.blockid;
             blockdb.set_pending_root(update.to_blockref);
             // request new root
+            trace!("register client");
             self.send_block_request(self.clients.borrow_mut().get_mut(&addr).unwrap(), BlockRequest { blockid }, addr);
         }
     }
@@ -157,6 +161,7 @@ impl<'a> Handler<'a> {
     }
 
     pub fn root_update_response(&self, addr: SocketAddr, res: RootUpdateResponse) -> impl Future<Item = (), Error = io::Error> {
+        trace!("got RootUpdateResponse: {:?}", res);
         let mut r = self.clients.borrow_mut();
         let client = r.get_mut(&addr).unwrap();
         // prepare to receive a block request response, then send one out
@@ -177,6 +182,7 @@ impl<'a> Handler<'a> {
     }
 
     pub fn block_request(&self, addr: SocketAddr, req: BlockRequest) -> impl Future<Item = (), Error = io::Error> {
+        trace!("got BlockRequest: {:?}", req);
         let bdb = self.blockdb.borrow_mut();
         let mut r = self.clients.borrow_mut();
         let client = r.get_mut(&addr).unwrap();
@@ -192,6 +198,7 @@ impl<'a> Handler<'a> {
             out.transfers.last().unwrap().clone() // clone cause i dont wanna fight with borrowck about this
         });
 
+        // if this is lost it doesn't matter, the client will request again
         self.tx.clone().send((Msg::BlockRequestResponse(BlockRequestResponse {
             blockid: req.blockid,
             start_id: transfer.0,
@@ -202,6 +209,7 @@ impl<'a> Handler<'a> {
     }
 
     pub fn block_request_response(&self, addr: SocketAddr, res: BlockRequestResponse) {
+        trace!("got BlockRequestResponse: {:?}", res);
         let mut r = self.clients.borrow_mut();
         let client = r.get_mut(&addr).unwrap();
         if let Some(task) = client.pending_block_requests.remove(&res.blockid) {
@@ -267,6 +275,7 @@ impl<'a> Handler<'a> {
                                 start += count as u64;
                             }
                         }
+                        trace!("sending status update: {:?}", rle);
                         // TODO: proper stuff
                         Either::B(tx.clone().send((Msg::TransferStatus(TransferStatus {
                             missing_ranges: rle,
@@ -292,6 +301,7 @@ impl<'a> Handler<'a> {
     }
 
     pub fn transfer_payload(&self, addr: SocketAddr, chunk: TransferPayload) {
+        trace!("got TransferPayload, len {}", chunk.data.len());
         let mut clients = self.clients.borrow_mut();
         let mut blockdb = self.blockdb.borrow_mut();
         let transfer = {
@@ -309,6 +319,7 @@ impl<'a> Handler<'a> {
             return;
         }
         // block transfer complete, maybe request further blocks
+        trace!("block transfer complete");
         let dec = frontend::resolve(&*blockdb, blockdb.get(transfer.blockid).full().id, true);
         // TODO: check if block is valid
         match dec {
@@ -325,28 +336,31 @@ impl<'a> Handler<'a> {
             Decoded::Leaf(_) => (),
         }
 
-        if frontend::verify(&*blockdb, true) {
-            // all transfers complete
-            { Frontend::from_blockdb(&*blockdb).write_to_dir(&self.folder); }
-            let from = blockdb.apply_pending();
-            // if this is lost we don't care, it's just a hint, clients should poll regardless
-            // TODO: send to all clients
-            let msg = Msg::RootUpdateResponse(RootUpdateResponse {
-                from_blockid: from.blockid,
-                to_blockid: blockdb.root().blockid,
-                to_key: blockdb.root().key,
-            });
-            for &client_addr in self.clients.borrow().keys() {
-                let req = self.tx.clone().send((msg.clone(), client_addr))
-                    .map(|_| ())
-                    .map_err(|_| unreachable!());
-                tokio::executor::current_thread::spawn(req);
-            }
-            self.clients.borrow_mut().remove(&addr);
+        if !frontend::verify(&*blockdb, true) {
+            return;
         }
+        // all transfers complete
+        trace!("all transfers complete");
+        { Frontend::from_blockdb(&*blockdb).write_to_dir(&self.folder); }
+        let from = blockdb.apply_pending();
+        // if this is lost we don't care, it's just a hint, clients should poll regardless
+        // TODO: send to all clients
+        let msg = Msg::RootUpdateResponse(RootUpdateResponse {
+            from_blockid: from.blockid,
+            to_blockid: blockdb.root().blockid,
+            to_key: blockdb.root().key,
+        });
+        for &client_addr in self.clients.borrow().keys() {
+            let req = self.tx.clone().send((msg.clone(), client_addr))
+                .map(|_| ())
+                .map_err(|_| unreachable!());
+            tokio::executor::current_thread::spawn(req);
+        }
+        self.clients.borrow_mut().remove(&addr);
     }
 
     pub fn transfer_status(&self, addr: SocketAddr, status: TransferStatus) -> impl Future<Item = (), Error = io::Error> {
+        trace!("got transfer status: {:?}", status);
         let mut r = self.clients.borrow_mut();
         let client = r.get_mut(&addr).unwrap();
 

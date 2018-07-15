@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["main() <main@ehvag.de>", "oberien <jaro.fietz@gmx.de>"]
 
 [dependencies]
-tokio = "0.1"
+tokio = "0.1.7"
 tokio-io = "0.1"
 bytes = "0.4"
 futures = "0.1"
@@ -21,3 +21,5 @@ rand = "0.5"
 diff = "0.1"
 inotify = "0.5"
 structopt = "0.2.10"
+log = "0.4"
+env_logger = "0.5"
